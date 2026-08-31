@@ -1,24 +1,12 @@
 // =============================================================================
 //  Ae 虚拟机 (ae = Ae VM)
-// -----------------------------------------------------------------------------
-//  读取 .aeo 字节码 → 解析 → 执行
-//
-//  ▌运行时值模型 (Tagged Value / 类型化栈)
-//  ─────────────────────────────────────────────────────────────────────────
-//  每个运行时值 = payload + 类型标签，存于操作数栈。
-//  类型用独立的"类型栈"跟踪，与值栈平行 —— Lua/CPython 的标准做法。
-//
-//  ValueKind:
-//      VAL_INT    = 0   → int64 payload
-//      VAL_DOUBLE = 1   → double payload
-//      VAL_STR    = 2   → uint16 常量池索引 payload
-//      VAL_BOOL   = 3   → int64 payload (0=false, 1=true)
 // =============================================================================
 
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <string>
+#include <memory>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -26,38 +14,7 @@
 
 using namespace std;
 
-// -----------------------------------------------------------------------------
-//  常量池条目
-// -----------------------------------------------------------------------------
-struct Const {
-    enum { UTF8 = 1, INT32 = 2, DOUBLE = 3 } tag;
-    string   s;
-    int32_t  i = 0;
-    double   d = 0;
-};
-
-// -----------------------------------------------------------------------------
-//  运行时值
-// -----------------------------------------------------------------------------
-enum ValueKind { VAL_INT = 0, VAL_DOUBLE = 1, VAL_STR = 2, VAL_BOOL = 3 };
-
-struct Value {
-    ValueKind kind;
-    union {
-        int64_t  i;
-        double   f;
-        uint16_t strIdx;
-    };
-    Value() : kind(VAL_INT), i(0) {}
-    Value(int64_t v) : kind(VAL_INT), i(v) {}
-    Value(double v)  : kind(VAL_DOUBLE), f(v) {}
-    Value(ValueKind k, uint16_t idx) : kind(k), strIdx(idx) {}
-    Value(bool b)    : kind(VAL_BOOL), i(b ? 1 : 0) {}
-};
-
-// -----------------------------------------------------------------------------
-//  字节码读取辅助（大端）
-// -----------------------------------------------------------------------------
+// 字节码读取辅助（大端）
 static uint8_t  readU8 (const vector<uint8_t>& b, size_t& p) { return b[p++]; }
 static uint16_t readU16(const vector<uint8_t>& b, size_t& p) {
     uint16_t v = (uint16_t)((b[p] << 8) | b[p+1]); p += 2; return v;
@@ -65,6 +22,36 @@ static uint16_t readU16(const vector<uint8_t>& b, size_t& p) {
 static uint32_t readU32(const vector<uint8_t>& b, size_t& p) {
     uint32_t v = (uint32_t)((b[p] << 24) | (b[p+1] << 16) | (b[p+2] << 8) | b[p+3]); p += 4; return v;
 }
+
+// 常量池条目
+struct Const {
+    enum { UTF8 = 1, INT32 = 2, DOUBLE = 3 } tag;
+    string   s;
+    int32_t  i = 0;
+    double   d = 0;
+};
+
+// 运行时值 —— 不用 union（避免 shared_ptr 破坏 trivial 要求）
+//   int/double/bool → 内联存储
+//   string          → shared_ptr<string>（堆分配）
+enum ValueKind { VAL_INT = 0, VAL_DOUBLE = 1, VAL_STR = 2, VAL_BOOL = 3 };
+
+struct Value {
+    ValueKind kind;
+    union {
+        int64_t  i;
+        double   f;
+    };
+    shared_ptr<string> str;   // 仅 VAL_STR
+
+    Value() : kind(VAL_INT), i(0) {}
+    Value(int64_t v) : kind(VAL_INT), i(v) {}
+    Value(double v)  : kind(VAL_DOUBLE), f(v) {}
+    explicit Value(shared_ptr<string> s) : kind(VAL_STR), str(s) {}
+    Value(bool b)    : kind(VAL_BOOL), i(b ? 1 : 0) {}
+    Value(const string& s) : kind(VAL_STR), str(make_shared<string>(s)) {}
+    // 默认拷贝/移动即可（shared_ptr 自带）
+};
 
 // =============================================================================
 //  虚拟机
@@ -78,7 +65,6 @@ public:
     vector<Value> stack;
     vector<Value> globals;
 
-    // ---- 栈操作 ----
     Value pop() {
         if (stack.empty()) throw runtime_error("栈下溢");
         Value v = stack.back(); stack.pop_back(); return v;
@@ -96,21 +82,21 @@ public:
         if (v.kind == VAL_BOOL)   return v.i == 0;
         if (v.kind == VAL_INT)    return v.i == 0;
         if (v.kind == VAL_DOUBLE) return v.f == 0.0;
-        return false; // string 非空视为 true
+        if (v.kind == VAL_STR)    return v.str == nullptr || *v.str == "";
+        return false;
     }
 
     void run() {
         while (pc < code.size()) {
             uint8_t op = code[pc++];
             switch (op) {
-                case 0x00: // NOP
-                    break;
+                case 0x00: break; // NOP
 
                 case 0x01: { // LOAD_CONST u16(idx)
                     uint16_t idx = readU16(code, pc);
                     const Const& c = constPool[idx];
                     if (c.tag == Const::UTF8) {
-                        push(Value(VAL_STR, idx));
+                        push(Value(make_shared<string>(c.s)));
                     } else if (c.tag == Const::INT32) {
                         push(Value((int64_t)c.i));
                     } else if (c.tag == Const::DOUBLE) {
@@ -126,8 +112,7 @@ public:
                     break;
                 }
 
-                case 0x03: // HALT
-                    return;
+                case 0x03: return; // HALT
 
                 case 0x04: { // STORE u16(slot)
                     uint16_t slot = readU16(code, pc);
@@ -143,19 +128,19 @@ public:
                     break;
                 }
 
-                // ---- 算术指令 ----
-                case 0x06: { Value r = pop(), l = pop(); push(Value(l.i + r.i)); break; } // IADD
-                case 0x07: { Value r = pop(), l = pop(); push(Value(l.i - r.i)); break; } // ISUB
-                case 0x08: { Value r = pop(), l = pop(); push(Value(l.i * r.i)); break; } // IMUL
+                // 算术
+                case 0x06: { Value r = pop(), l = pop(); push(Value(l.i + r.i)); break; }
+                case 0x07: { Value r = pop(), l = pop(); push(Value(l.i - r.i)); break; }
+                case 0x08: { Value r = pop(), l = pop(); push(Value(l.i * r.i)); break; }
                 case 0x09: { // IDIV
                     Value r = pop(), l = pop();
                     if (r.i == 0) throw runtime_error("整数除以零");
                     push(Value(l.i / r.i));
                     break;
                 }
-                case 0x0A: { Value r = pop(), l = pop(); push(Value(toDouble(l) + toDouble(r))); break; } // FADD
-                case 0x0B: { Value r = pop(), l = pop(); push(Value(toDouble(l) - toDouble(r))); break; } // FSUB
-                case 0x0C: { Value r = pop(), l = pop(); push(Value(toDouble(l) * toDouble(r))); break; } // FMUL
+                case 0x0A: { Value r = pop(), l = pop(); push(Value(toDouble(l) + toDouble(r))); break; }
+                case 0x0B: { Value r = pop(), l = pop(); push(Value(toDouble(l) - toDouble(r))); break; }
+                case 0x0C: { Value r = pop(), l = pop(); push(Value(toDouble(l) * toDouble(r))); break; }
                 case 0x0D: { // FDIV
                     Value r = pop(), l = pop();
                     double rd = toDouble(r);
@@ -163,7 +148,7 @@ public:
                     push(Value(toDouble(l) / rd));
                     break;
                 }
-                case 0x0E: { Value v = pop(); push(Value((double)toDouble(v))); break; } // ITOD
+                case 0x0E: { Value v = pop(); push(Value((double)toDouble(v))); break; }
                 case 0x0F: { // IMOD
                     Value r = pop(), l = pop();
                     if (r.i == 0) throw runtime_error("取模除以零");
@@ -171,7 +156,7 @@ public:
                     break;
                 }
 
-                // ---- 整数比较 (0x10-0x15) → VAL_BOOL ----
+                // 整数比较
                 case 0x10: { Value r = pop(), l = pop(); push(Value((bool)(l.i == r.i))); break; }
                 case 0x11: { Value r = pop(), l = pop(); push(Value((bool)(l.i != r.i))); break; }
                 case 0x12: { Value r = pop(), l = pop(); push(Value((bool)(l.i <  r.i))); break; }
@@ -179,7 +164,7 @@ public:
                 case 0x14: { Value r = pop(), l = pop(); push(Value((bool)(l.i >  r.i))); break; }
                 case 0x15: { Value r = pop(), l = pop(); push(Value((bool)(l.i >= r.i))); break; }
 
-                // ---- 浮点比较 (0x16-0x1B) → VAL_BOOL ----
+                // 浮点比较
                 case 0x16: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) == toDouble(r)))); break; }
                 case 0x17: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) != toDouble(r)))); break; }
                 case 0x18: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) <  toDouble(r)))); break; }
@@ -187,14 +172,14 @@ public:
                 case 0x1A: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) >  toDouble(r)))); break; }
                 case 0x1B: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) >= toDouble(r)))); break; }
 
-                // ---- 控制流 ----
-                case 0x2A: { // JZ  u16(offset)  栈顶为 false/0 时跳转（有符号偏移）
+                // 控制流
+                case 0x2A: { // JZ
                     uint16_t u = readU16(code, pc);
                     Value v = pop();
                     if (isFalse(v)) pc = (size_t)((int64_t)pc + (int16_t)u);
                     break;
                 }
-                case 0x2B: { // JMP u16(offset)  无条件跳转（有符号偏移）
+                case 0x2B: { // JMP
                     uint16_t u = readU16(code, pc);
                     pc = (size_t)((int64_t)pc + (int16_t)u);
                     break;
@@ -207,16 +192,26 @@ public:
     }
 
     void invoke(uint8_t funcId, uint8_t argc) {
+        (void)argc;
         if (funcId == 0) {
             // pr(...)
-            size_t base = stack.size() - argc;
-            for (size_t i = 0; i < argc; i++) {
-                Value v = stack[base + i];
+            size_t n = stack.size();
+            for (size_t i = 0; i < n; i++) {
                 if (i > 0) cout << " ";
-                printValue(v);
+                printValue(stack[i]);
             }
+            stack.resize(stack.size() - n);
+        } else if (funcId == 2) {
+            // prln(...) = pr(...) + 换行
+            invoke(0, argc);
             cout << endl;
-            for (uint8_t i = 0; i < argc; i++) stack.pop_back();
+        } else if (funcId == 1) {
+            // inp(...)
+            string line;
+            if (!getline(cin, line)) {
+                throw runtime_error("inp() 读取输入失败（遇到 EOF）");
+            }
+            push(Value(make_shared<string>(line)));
         } else {
             throw runtime_error("调用未定义的函数 id=" + to_string(funcId));
         }
@@ -224,21 +219,17 @@ public:
 
     void printValue(const Value& v) {
         if (v.kind == VAL_STR) {
-            cout << constPool[v.strIdx].s;
+            if (v.str) cout << *(v.str);
         } else if (v.kind == VAL_BOOL) {
             cout << (v.i ? "true" : "false");
         } else if (v.kind == VAL_DOUBLE) {
-            if (v.f == (double)(int64_t)v.f) {
-                cout << (int64_t)v.f;
-            } else {
-                cout << v.f;
-            }
-        } else { // VAL_INT
+            if (v.f == (double)(int64_t)v.f) cout << (int64_t)v.f;
+            else cout << v.f;
+        } else {
             cout << v.i;
         }
     }
 
-    // ---- 加载字节码 ----
     void load(const string& path) {
         ifstream f(path, ios::binary);
         if (!f) throw runtime_error("无法打开: " + path);
@@ -246,14 +237,13 @@ public:
         if (all.size() < 16) throw runtime_error("文件过短，不是有效的 .aeo 文件");
 
         size_t p = 0;
-        if (all[p] != 'A' || all[p+1] != 'e' || all[p+2] != 'B' || all[p+3] != 'c')
-            throw runtime_error("魔数不匹配，不是有效的 .aeo 文件");
+        if (all[p]!='A'||all[p+1]!='e'||all[p+2]!='B'||all[p+3]!='c')
+            throw runtime_error("魔数不匹配");
         p += 4;
-        uint8_t major = all[p++], minor = all[p++];
+        p += 2; // major, minor
         p += 2; // flags
-        (void)major; (void)minor;
+        (void)0;
 
-        // 常量池
         uint32_t poolCount = readU32(all, p);
         constPool.resize(poolCount);
         for (uint32_t i = 0; i < poolCount; i++) {
@@ -264,8 +254,7 @@ public:
                 constPool[i].s = string((const char*)(all.data() + p), len);
                 p += len;
             } else if (tag == Const::INT32) {
-                int32_t v = (int32_t)readU32(all, p);
-                constPool[i].i = v;
+                constPool[i].i = (int32_t)readU32(all, p);
             } else if (tag == Const::DOUBLE) {
                 uint64_t bits = 0;
                 for (int s = 56; s >= 0; s -= 8) bits = (bits << 8) | readU8(all, p);
@@ -273,7 +262,6 @@ public:
             }
         }
 
-        // 代码
         uint32_t codeLen = readU32(all, p);
         code.assign(all.begin() + p, all.begin() + p + codeLen);
     }

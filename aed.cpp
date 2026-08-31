@@ -24,7 +24,7 @@ static uint32_t readU32(const vector<uint8_t>& b, size_t& p) { uint32_t v=(uint3
 
 // 内置函数名映射
 static const char* funcName(uint8_t id) {
-    switch (id) { case 0: return "pr"; default: return "?"; }
+    switch (id) { case 0: return "pr"; case 1: return "inp"; case 2: return "prln"; default: return "?"; }
 }
 
 int main(int argc, char** argv) {

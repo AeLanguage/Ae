@@ -57,7 +57,7 @@
 //  --------------------------------------------------------------------------
 //  运行时类型: int, double, string, bool
 //  比较运算: 支持 int-int, double-double, 以及混合 int-double（自动提升）
-//  比较结果: bool 值 (VAL_BOOL)，可存储到变量、传递给 pr()
+//  比较结果: bool 值 (VAL_BOOL)，可存储到变量、传递给 pr()/prln()
 //
 //  ▌表达式优先级 (从高到低)
 //      primary → 一元 - → 乘除模 → 加减 → 比较(> < >= <= == !=)
@@ -235,8 +235,10 @@ public:
             if (id == "while")    return {TK_WHILE, id};
             if (id == "break")    return {TK_BREAK, id};
             if (id == "continue") return {TK_CONTINUE, id};
-            if (id == "pr")       return {TK_IDENT, id}; // pr 是内置函数，词法上当标识符
-            if (id == "main")     return {TK_IDENT, id};
+            if (id == "pr")          return {TK_IDENT, id}; // pr 是内置函数，词法上当标识符
+            if (id == "inp")         return {TK_IDENT, id}; // inp 是内置函数
+            if (id == "prln")       return {TK_IDENT, id}; // prln 是内置函数
+            if (id == "main")        return {TK_IDENT, id};
             return {TK_IDENT, id, 0, false};
         }
         pos++;
@@ -412,9 +414,6 @@ public:
             // 0 - x 实现一元负号
             code.emit(0x01); code.u16(cp.addInt(0));
             code.emit(d ? 0x0A : 0x06); // 0 + (-x) 取反 → 用 ISUB/FSUB: 0 - x
-            // 上面 0 + 是占位思路，改为直接：压 0 再减
-            // 修正：0x01 已压入 0，栈顶是 x，次顶是 0 → 需要交换？改用专用逻辑：
-            // 栈现状：[..., 0, x]，ISUB → 0 - x ✓（ISUB 弹出 b=x, a=0 → a-b = 0-x）
             return d;
         }
         return primary();
@@ -448,7 +447,8 @@ public:
                     } while (true);
                 }
                 expect(TK_RPAREN, ")");
-                uint8_t funcId = 0;
+                // funcId: 0=pr, 1=inp, 2=prln
+                uint8_t funcId = (name == "inp") ? 1 : (name == "prln" ? 2 : 0);
                 code.emit(0x02); code.u8(funcId); code.u8(argc);
                 return false; // 调用结果当 int 处理（简化）
             }
@@ -496,8 +496,9 @@ public:
                 assignStmt(name);
                 return;
             }
-            // 否则视为函数调用语句（如 pr(...)）
-            advance(); // 吃掉函数名（name 已保存，但调用只需 funcId=0）
+            // 否则视为函数调用语句（如 pr(...) / inp(...)）
+            string fname = name;
+            advance(); // 吃掉函数名
             if (cur.type == TK_LPAREN) {
                 advance();
                 uint8_t argc = 0;
@@ -509,7 +510,8 @@ public:
                     } while (true);
                 }
                 expect(TK_RPAREN, ")");
-                code.emit(0x02); code.u8(0); code.u8(argc);
+                uint8_t funcId = (fname == "inp") ? 1 : (fname == "prln" ? 2 : 0);
+                code.emit(0x02); code.u8(funcId); code.u8(argc);
                 return;
             }
             throw runtime_error("未预期的标识符 '" + name + "'");
@@ -554,8 +556,6 @@ public:
             if (isDiv) {
                 // 除法：若右侧为 double 或需提升
                 if (rd) { /* 右侧已是 double */ }
-                // 简单处理：都用浮点除再转回？保持整数除法以符合直觉 a /= 2
-                // 此处采用：若任一侧为 double → FDIV，否则 IDIV
                 bool isDouble = ld || rd;
                 if (isDouble) {
                     if (!ld) code.emit(0x0E);
