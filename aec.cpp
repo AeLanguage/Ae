@@ -1,17 +1,19 @@
 // =============================================================================
 //  Ae 编译器 (aec = Ae Compiler)  ——  支持自定义函数 + 局部变量 + 递归
+//                                      + 字符串拼接 + len/str/int/float
 // -----------------------------------------------------------------------------
 //  读取 .ae 源文件 → 编译为 .aeo 字节码
 //
-//  ▌语法扩展：自定义函数
-//      func name(param1, param2, ...) {
-//          local x = 10       // 局部变量
-//          return x           // 返回值
-//      }
-//      - 函数只能定义在 main 之外（顶部）
-//      - 参数和 local 声明都是局部变量（隔离于全局）
-//      - 支持递归调用
-//      - return 可返回任意类型，无 return 默认返回 0
+//  ▌新增语法：
+//      字符串拼接:  s = "Hello " + name        // + 号，任一操作数为字符串即拼接
+//      长度:        len("abc") → 3              // len(str) 或 len(int)
+//      类型转换:    str(123) → "123"            // 任意 → 字符串
+//                  int("42") → 42              // 任意 → 整数
+//                  float("3.14") → 3.14        // 任意 → 浮点
+//      字符串比较:  "abc" == "xyz"             // 直接用 == / != / < / > 等
+//
+//  ▌内置函数 ID 分配：
+//      0 = pr, 1 = inp, 2 = prln, 3 = len, 4 = str, 5 = int, 6 = float
 //
 //  ▌字节码规范 (Ae Bytecode, .aeo)
 //  ──────────────────────────────────────────────────────────────────────────
@@ -40,18 +42,18 @@
 //      0x07    ISUB            -                         (a-b) int
 //      0x08    IMUL            -                         (a*b) int
 //      0x09    IDIV            -                         (a/b) int
-//      0x0A    FADD            -                         浮点加
+//      0x0A    FADD            -                         浮点加 / 字符串拼接
 //      0x0B    FSUB            -                         浮点减
 //      0x0C    FMUL            -                         浮点乘
 //      0x0D    FDIV            -                         浮点除
 //      0x0E    ITOD            -                         int64 → double
 //      0x0F    IMOD            -                         (a%b) int
-//      0x10    IEQ             -                         (a==b) bool
-//      0x11    INEQ            -                         (a!=b) bool
-//      0x12    ILT             -                         (a<b) bool
-//      0x13    ILE             -                         (a<=b) bool
-//      0x14    IGT             -                         (a>b) bool
-//      0x15    IGE             -                         (a>=b) bool
+//      0x10    IEQ             -                         (a==b) int/bool/str
+//      0x11    INEQ            -                         (a!=b)
+//      0x12    ILT             -                         (a<b)
+//      0x13    ILE             -                         (a<=b)
+//      0x14    IGT             -                         (a>b)
+//      0x15    IGE             -                         (a>=b)
 //      0x16    FCMP_EQ         -                         浮点 ==
 //      0x17    FCMP_NE         -                         浮点 !=
 //      0x18    FCMP_LT         -                         浮点 <
@@ -87,11 +89,11 @@ using namespace std;
 //  字节码写入辅助（大端）
 // =============================================================================
 static void writeU16(vector<uint8_t>& v, uint16_t val) {
-    v.push_back((val >> 8) & 0xFF); v.push_back(val & 0xFF);
+    v.push_back(static_cast<uint8_t>((val >> 8) & 0xFF)); v.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 static void writeU32(vector<uint8_t>& v, uint32_t val) {
-    v.push_back((val >> 24) & 0xFF); v.push_back((val >> 16) & 0xFF);
-    v.push_back((val >> 8) & 0xFF); v.push_back(val & 0xFF);
+    v.push_back(static_cast<uint8_t>((val >> 24) & 0xFF)); v.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
+    v.push_back(static_cast<uint8_t>((val >> 8) & 0xFF)); v.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 
 // =============================================================================
@@ -152,8 +154,8 @@ struct CodeBuf {
     void u32(uint32_t v){ writeU32(code, v); }
     size_t size() const { return code.size(); }
     void patchU16At(size_t pos, uint16_t val) {
-        code[pos]   = (val >> 8) & 0xFF;
-        code[pos+1] = val & 0xFF;
+        code[pos]   = static_cast<uint8_t>((val >> 8) & 0xFF);
+        code[pos+1] = static_cast<uint8_t>(val & 0xFF);
     }
     void write(vector<uint8_t>& out) const {
         writeU32(out, (uint32_t)code.size());
@@ -179,7 +181,7 @@ public:
 
     map<string, uint16_t> functions;       // name → funcId
     map<uint16_t, uint16_t> funcParamCounts; // funcId → paramCount
-    set<uint16_t> userFuncIds;             // 用户定义的函数 ID 集合
+    set<uint16_t> userFuncIds;
 
     bool inFunction = false;
 
@@ -229,6 +231,7 @@ enum TK {
     TK_ADDEQ, TK_SUBEQ, TK_MULEQ, TK_DIVEQ,
     TK_FUNC, TK_IF, TK_ELSE, TK_WHILE, TK_BREAK, TK_CONTINUE,
     TK_RETURN, TK_LOCAL,
+    // 内置函数（len/str/int/float）统一作为 TK_IDENT，primary() 按名字识别
     TK_LPAREN, TK_RPAREN, TK_COMMA, TK_LBRACE, TK_RBRACE
 };
 
@@ -243,6 +246,8 @@ class Lexer {
     string src; size_t pos;
 public:
     Lexer(const string& s) : src(s), pos(0) {}
+    const string& source() const { return src; }
+    void reset(const string& s) { src = s; pos = 0; }
     void skip() {
         while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r')) pos++;
     }
@@ -278,6 +283,7 @@ public:
         }
         if (isalpha(c) || c == '_') {
             string id; while (pos < src.size() && (isalnum(src[pos]) || src[pos] == '_')) id += src[pos++];
+            // 关键字
             if (id == "if")       return {TK_IF, id};
             if (id == "else")     return {TK_ELSE, id};
             if (id == "while")    return {TK_WHILE, id};
@@ -288,6 +294,12 @@ public:
             if (id == "func")     return {TK_FUNC, id};
             if (id == "true")     return {TK_BOOL, id, 1, false};
             if (id == "false")    return {TK_BOOL, id, 0, false};
+            // 内置函数（返回 TK_IDENT，primary() 里按名字识别为内置调用）
+            if (id == "len")      return {TK_IDENT, id};
+            if (id == "str")      return {TK_IDENT, id};
+            if (id == "int")      return {TK_IDENT, id};
+            if (id == "float")    return {TK_IDENT, id};
+            // 运行时内置（保留为普通标识符）
             if (id == "pr")       return {TK_IDENT, id};
             if (id == "prln")     return {TK_IDENT, id};
             if (id == "inp")      return {TK_IDENT, id};
@@ -331,24 +343,49 @@ public:
     ConstantPool cp;
     SymbolTable  syms;
 
-    // 最终输出：完整的字节码（全局代码 + 函数定义）
     CodeBuf  output;
-
-    // 当前代码缓冲区（指向 output 或 funcBodyBuf）
     CodeBuf* currentCode = &output;
-
-    // 函数定义编译结果（在顶层代码之后追加）
     vector<vector<uint8_t>> funcDefs;
 
     // 内置函数 ID
     static const uint8_t BID_pr   = 0;
     static const uint8_t BID_inp  = 1;
     static const uint8_t BID_prln = 2;
+    static const uint8_t BID_len  = 3;
+    static const uint8_t BID_str  = 4;
+    static const uint8_t BID_int  = 5;
+    static const uint8_t BID_float = 6;
 
-    // 下一个用户函数 ID（从 3 开始，0/1/2 留给内置）
-    uint16_t nextUserFuncId = 3;
+    // 内置函数名 → ID 映射（含关键字型内置）
+    uint8_t builtinId(const string& name) const {
+        if (name == "pr")     return BID_pr;
+        if (name == "inp")    return BID_inp;
+        if (name == "prln")   return BID_prln;
+        if (name == "len")    return BID_len;
+        if (name == "str")    return BID_str;
+        if (name == "int")    return BID_int;
+        if (name == "float")  return BID_float;
+        return 0xFF;
+    }
 
-    // 循环上下文
+    uint16_t nextUserFuncId = 7; // 0-6 留给内置
+
+    bool declOnly = false;
+
+    void skipBlock() {
+        if (cur.type != TK_LBRACE) return;
+        int depth = 1;
+        advance();
+        while (cur.type != TK_EOF && depth > 0) {
+            if (cur.type == TK_LBRACE) depth++;
+            else if (cur.type == TK_RBRACE) depth--;
+            if (depth > 0) advance();
+        }
+        if (cur.type == TK_RBRACE) advance();
+    }
+
+    void pc_reset() { L.reset(L.source()); advance(); }
+
     struct LoopCtx {
         size_t startPos;
         vector<size_t> breakPatches;
@@ -377,11 +414,18 @@ public:
     //  顶层
     // =========================================================================
     void program() {
+        declOnly = true;
+        while (cur.type != TK_EOF) {
+            if (cur.type == TK_FUNC) funcDef();
+            else advance();
+        }
+        declOnly = false;
+        pc_reset();
         while (cur.type != TK_EOF) {
             if (cur.type == TK_FUNC) {
                 funcDef();
             } else if (cur.type == TK_IDENT && cur.text == "main") {
-                advance(); // 'main'
+                advance();
                 expect(TK_LBRACE, "{");
                 while (cur.type != TK_RBRACE && cur.type != TK_EOF) {
                     stmt();
@@ -391,33 +435,34 @@ public:
                 stmt();
             }
         }
-        // 追加所有函数定义到输出末尾
         for (auto& fdef : funcDefs) {
             for (uint8_t b : fdef) {
                 output.emit(b);
             }
         }
-        output.emit(0x03); // HALT（确保顶层有终止）
+        output.emit(0x03); // HALT
     }
 
-    // 解析函数定义
     void funcDef() {
         advance(); // 'func'
         if (cur.type != TK_IDENT) throw runtime_error("func 后需要函数名");
         string fname = cur.text;
         advance();
 
-        // 记录函数
-        uint16_t funcId = nextUserFuncId++;
-        syms.functions[fname] = funcId;
+        uint16_t funcId;
+        auto it = syms.functions.find(fname);
+        if (it != syms.functions.end()) {
+            funcId = it->second;
+        } else {
+            funcId = nextUserFuncId++;
+            syms.functions[fname] = funcId;
+        }
 
         expect(TK_LPAREN, "(");
 
-        // 进入函数作用域
         syms.inFunction = true;
         syms.resetForFunction();
 
-        // 参数列表
         vector<string> params;
         if (cur.type != TK_RPAREN) {
             if (cur.type != TK_IDENT) throw runtime_error("参数名必须是标识符");
@@ -436,36 +481,35 @@ public:
         expect(TK_RPAREN, ")");
         expect(TK_LBRACE, "{");
 
-        // 创建函数体的独立缓冲区
         CodeBuf bodyBuf;
         CodeBuf* savedCode = currentCode;
+        if (declOnly) {
+            syms.inFunction = false;
+            skipBlock();
+            return;
+        }
         currentCode = &bodyBuf;
 
-        // 编译函数体
         while (cur.type != TK_RBRACE && cur.type != TK_EOF) {
             stmt();
         }
         expect(TK_RBRACE, "}");
 
-        // 如果函数体末尾没有 RET，自动添加
         if (bodyBuf.size() == 0 || bodyBuf.code.back() != 0x42) {
-            bodyBuf.emit(0x01); // LOAD_CONST 0
+            bodyBuf.emit(0x01);
             bodyBuf.u16(cp.addInt(0));
-            bodyBuf.emit(0x42); // RET
+            bodyBuf.emit(0x42);
         }
 
-        // 恢复
         currentCode = savedCode;
         syms.inFunction = false;
 
-        // 组装 FUNC_DEF 字节码
         CodeBuf fullDef;
-        fullDef.emit(0x40);                    // FUNC_DEF
+        fullDef.emit(0x40);
         fullDef.u16(funcId);
-        fullDef.u16((uint16_t)params.size());  // paramCount
-        fullDef.u16(syms.localCount);           // localCount（含参数 + 局部变量）
-        fullDef.u32((uint32_t)bodyBuf.size());  // codeSize
-        // 函数体
+        fullDef.u16((uint16_t)params.size());
+        fullDef.u16(syms.localCount);
+        fullDef.u32((uint32_t)bodyBuf.size());
         for (uint8_t b : bodyBuf.code) {
             fullDef.emit(b);
         }
@@ -482,13 +526,15 @@ public:
         } else if (cur.type == TK_WHILE) {
             whileStmt();
         } else if (cur.type == TK_BREAK) {
+            if (loopStack.empty()) throw runtime_error("break 只能在循环体内使用");
             advance();
-            currentCode->emit(0x2B); // JMP
+            currentCode->emit(0x2B);
             size_t pos = placeholderU16();
             loopStack.back().breakPatches.push_back(pos);
         } else if (cur.type == TK_CONTINUE) {
+            if (loopStack.empty()) throw runtime_error("continue 只能在循环体内使用");
             advance();
-            currentCode->emit(0x2B); // JMP
+            currentCode->emit(0x2B);
             size_t pos = placeholderU16();
             loopStack.back().contPatches.push_back(pos);
         } else if (cur.type == TK_RETURN) {
@@ -507,7 +553,6 @@ public:
     }
 
     void exprStmt() {
-        // 赋值语句：IDENT = expr
         if (cur.type == TK_IDENT) {
             string name = cur.text;
             Lexer peekL = L;
@@ -527,9 +572,9 @@ public:
                 return;
             } else if (peek.type == TK_ADDEQ || peek.type == TK_SUBEQ ||
                        peek.type == TK_MULEQ || peek.type == TK_DIVEQ) {
-                advance(); // IDENT
+                advance();
                 TK op = cur.type;
-                advance(); // 运算符
+                advance();
                 VarInfo vi = syms.resolve(name);
                 if (vi.kind == VarInfo::LOCAL) {
                     currentCode->emit(0x31); currentCode->u16(vi.slot);
@@ -552,14 +597,13 @@ public:
                 }
                 return;
             }
-            // 函数调用语句（如 prln(...) 或 foo() 单独成句）
+            // 函数调用语句（含内置函数）
             if (peek.type == TK_LPAREN) {
-                callExpr(true);  // 语句级：丢弃返回值
+                callExpr(true);
                 return;
             }
         }
 
-        // 表达式语句（兜底）
         compare(false);
     }
 
@@ -579,10 +623,9 @@ public:
     void ifStmt() {
         advance(); // 'if'
         expect(TK_LPAREN, "(");
-        compare(false); // 条件 → 栈顶 bool
+        compare(false);
         expect(TK_RPAREN, ")");
 
-        // JZ 指令：opcode + u16 偏移
         currentCode->emit(0x2A);
         size_t jzPos = placeholderU16();
 
@@ -596,7 +639,6 @@ public:
 
         if (cur.type == TK_ELSE) {
             advance();
-            // JMP 跳过 else
             currentCode->emit(0x2B);
             size_t jmpPos = placeholderU16();
             size_t elseStart = currentCode->size();
@@ -628,7 +670,6 @@ public:
         compare(false);
         expect(TK_RPAREN, ")");
 
-        // JZ 跳出循环
         currentCode->emit(0x2A);
         size_t jzPos = placeholderU16();
 
@@ -640,7 +681,6 @@ public:
             stmt();
         }
 
-        // JMP 回到条件
         currentCode->emit(0x2B);
         size_t jmpBackPos = placeholderU16();
         size_t loopEnd = currentCode->size();
@@ -658,26 +698,46 @@ public:
         if (!syms.inFunction) throw runtime_error("return 只能在函数内使用");
         advance(); // 'return'
         if (cur.type != TK_RBRACE && cur.type != TK_EOF) {
-            compare(false); // 返回值
+            compare(false);
         } else {
-            currentCode->emit(0x01); // LOAD_CONST 0
+            currentCode->emit(0x01);
             currentCode->u16(cp.addInt(0));
         }
-        currentCode->emit(0x42); // RET
+        currentCode->emit(0x42);
     }
 
     // =========================================================================
     //  表达式
     // =========================================================================
-    bool compare(bool needDouble) {
-        bool ld = addsub(needDouble);
+
+    // 结果类型标记：返回 true 表示"结果为 double"，false 表示"结果为 int/str/bool"
+    // 但为了实现字符串拼接，我们需要更精细的类型信息，故用 enum
+    enum ResType { RT_INT, RT_DOUBLE, RT_STR, RT_BOOL };
+
+    ResType compare(bool /*needDouble*/ = false) {
+        ResType lt = addsub();
         if (cur.type >= TK_EQ && cur.type <= TK_GE) {
             TK op = cur.type; advance();
-            bool rd = addsub(needDouble);
-            bool isDouble = ld || rd;
-            if (isDouble) {
-                if (!ld) currentCode->emit(0x0E);
-                if (!rd) currentCode->emit(0x0E);
+            ResType rt = addsub();
+            // 如果任一操作数为字符串 → 用整数比较（IEQ 系列，已支持字符串字典序）
+            bool useStringCmp = (lt == RT_STR || rt == RT_STR);
+            // 如果任一为 double 且无字符串 → 浮点比较
+            bool useDoubleCmp = !useStringCmp && (lt == RT_DOUBLE || rt == RT_DOUBLE);
+
+            if (useStringCmp) {
+                // IEQ..IGE 已支持字符串，无需类型转换
+                switch (op) {
+                    case TK_EQ:  currentCode->emit(0x10); break;
+                    case TK_NEQ: currentCode->emit(0x11); break;
+                    case TK_LT:  currentCode->emit(0x12); break;
+                    case TK_LE:  currentCode->emit(0x13); break;
+                    case TK_GT:  currentCode->emit(0x14); break;
+                    case TK_GE:  currentCode->emit(0x15); break;
+                    default: break;
+                }
+            } else if (useDoubleCmp) {
+                if (lt == RT_INT) currentCode->emit(0x0E);
+                if (rt == RT_INT) currentCode->emit(0x0E);
                 switch (op) {
                     case TK_EQ:  currentCode->emit(0x16); break;
                     case TK_NEQ: currentCode->emit(0x17); break;
@@ -698,120 +758,106 @@ public:
                     default: break;
                 }
             }
-            return false;
+            return RT_BOOL;
         }
-        return ld;
+        return lt;
     }
 
-    bool addsub(bool needDouble) {
-        bool ld = muldiv(needDouble);
+    ResType addsub() {
+        ResType lt = muldiv();
         while (cur.type == TK_PLUS || cur.type == TK_MINUS) {
             TK op = cur.type; advance();
-            bool rd = muldiv(needDouble || ld);
-            bool isDouble = ld || rd;
-            if (isDouble) {
-                if (!ld) currentCode->emit(0x0E);
-                if (!rd) currentCode->emit(0x0E);
+            ResType rt = muldiv();
+            // 字符串拼接：任一操作数为字符串 → FADD（运行时处理）
+            if (lt == RT_STR || rt == RT_STR) {
+                // 如果左操作数不是字符串，需要 ITOD？不，运行时 toString 处理
+                // 但需要确保两侧都被当作"值"压栈（它们已经是）
+                // FADD 运行时检测字符串 → 拼接
+                currentCode->emit(0x0A); // FADD = 字符串拼接
+                lt = RT_STR;
+            } else if (lt == RT_DOUBLE || rt == RT_DOUBLE) {
+                if (lt == RT_INT) currentCode->emit(0x0E);
+                if (rt == RT_INT) currentCode->emit(0x0E);
                 currentCode->emit(op == TK_PLUS ? 0x0A : 0x0B);
+                lt = RT_DOUBLE;
             } else {
                 currentCode->emit(op == TK_PLUS ? 0x06 : 0x07);
+                lt = RT_INT;
             }
-            ld = isDouble;
         }
-        return ld;
+        return lt;
     }
 
-    bool muldiv(bool needDouble) {
-        bool ld = unary(needDouble);
+    ResType muldiv() {
+        ResType lt = unary();
         while (cur.type == TK_MUL || cur.type == TK_DIV || cur.type == TK_MOD) {
             TK op = cur.type; advance();
-            bool rd = unary(needDouble || ld);
-            bool isDouble = ld || rd;
+            ResType rt = unary();
             if (op == TK_MOD) {
                 currentCode->emit(0x0F);
-                ld = false;
-            } else if (isDouble) {
-                if (!ld) currentCode->emit(0x0E);
-                if (!rd) currentCode->emit(0x0E);
+                lt = RT_INT;
+            } else if (lt == RT_DOUBLE || rt == RT_DOUBLE) {
+                if (lt == RT_INT) currentCode->emit(0x0E);
+                if (rt == RT_INT) currentCode->emit(0x0E);
                 currentCode->emit(op == TK_MUL ? 0x0C : 0x0D);
-                ld = true;
+                lt = RT_DOUBLE;
             } else {
                 currentCode->emit(op == TK_MUL ? 0x08 : 0x09);
-                ld = false;
+                lt = RT_INT;
             }
         }
-        return ld;
+        return lt;
     }
 
-    bool unary(bool needDouble) {
+    ResType unary() {
         if (cur.type == TK_MINUS) {
             advance();
-            bool d = primary(needDouble);
-            // 生成 0 - x：需要交换栈顺序
-            // 策略：先把 x 存到临时全局槽，再加载 0，再加载 x，再 ISUB
-            // 简化：用一个固定临时槽
-            // 更好的方案：直接在 primary 结果上取负
-            // 由于栈式 VM：x 已在栈顶，我们生成：DUP → STORE tmp → LOAD_CONST 0 → LOAD_VAR tmp → ISUB
-            // 但我们没有 DUP 指令... 用两次加载代替
-            // 最简单：把 x 存到临时变量，然后 0 - tmp
-            // 使用全局槽 0xFFFF 作为临时... 不安全
-            // 实际方案：在 primary 之前预留，这里用一个 hack：
-            // 生成: x 已在栈 → STORE tmp; LOAD_CONST 0; LOAD_VAR tmp; ISUB
-            // tmp 用一个专用 slot（全局 0 如果有冲突风险，但这里只是编译期临时）
-            // 为了安全，用一个全局变量 __neg_tmp
-            // 但这会污染全局命名空间... 
-            // 最终方案：直接在栈上操作 — 用一个简单的 NEG 指令
-            // 暂时用：pop x, push -x 的方式在运行时处理
-            // 编译器层面：生成 ITOD(如果needDouble) 然后调用一个运行时 neg
-            // 最简方案：x; ITOD(如果需要); 然后用 0 - x
-            // 由于我们没有 DUP，这里用一个临时局部/全局变量
-            // 使用全局临时槽（用一个特殊名称，确保唯一）
-            uint16_t tmpSlot = syms.allocGlobal("__neg_tmp");
-            currentCode->emit(0x04); // STORE tmp  (保存 x)
-            currentCode->emit(0x01); // LOAD_CONST 0
-            currentCode->u16(cp.addInt(0));
-            if (d || needDouble) {
-                currentCode->emit(0x0E); // ITOD
-            }
-            currentCode->emit(0x05); // LOAD_VAR tmp
-            currentCode->u16(tmpSlot);
-            if (d || needDouble) {
-                currentCode->emit(0x0E); // ITOD
-                currentCode->emit(0x0B); // FSUB
+            ResType rt = primary();
+            uint16_t tmpSlot = syms.inFunction
+                ? syms.allocLocal("__neg_tmp")
+                : syms.allocGlobal("__neg_tmp");
+            if (rt == RT_DOUBLE) {
+                currentCode->emit(syms.inFunction ? 0x30 : 0x04); currentCode->u16(tmpSlot);
+                currentCode->emit(0x01); currentCode->u16(cp.addDouble(0.0));
+                currentCode->emit(syms.inFunction ? 0x31 : 0x05); currentCode->u16(tmpSlot);
+                currentCode->emit(0x0B);
             } else {
-                currentCode->emit(0x07); // ISUB
+                currentCode->emit(syms.inFunction ? 0x30 : 0x04); currentCode->u16(tmpSlot);
+                currentCode->emit(0x01); currentCode->u16(cp.addInt(0));
+                currentCode->emit(syms.inFunction ? 0x31 : 0x05); currentCode->u16(tmpSlot);
+                currentCode->emit(0x07);
             }
-            return d || needDouble;
+            return rt;
         }
-        return primary(needDouble);
+        return primary();
     }
 
-    bool primary(bool needDouble) {
+    ResType primary() {
         if (cur.type == TK_NUM) {
             if (cur.isFloat) {
                 currentCode->emit(0x01);
                 currentCode->u16(cp.addDouble(cur.num));
                 advance();
-                return true;
+                return RT_DOUBLE;
             } else {
                 currentCode->emit(0x01);
                 currentCode->u16(cp.addInt((int32_t)cur.num));
                 advance();
-                return false;
+                return RT_INT;
             }
         } else if (cur.type == TK_STR) {
             currentCode->emit(0x01);
             currentCode->u16(cp.addString(cur.text));
             advance();
-            return false;
+            return RT_STR;
         } else if (cur.type == TK_BOOL) {
             currentCode->emit(0x01);
             currentCode->u16(cp.addInt(cur.num ? 1 : 0));
             advance();
-            return false; // bool 本质是 int (VAL_BOOL)
+            return RT_BOOL;
         } else if (cur.type == TK_LPAREN) {
             advance();
-            bool d = compare(needDouble);
+            ResType d = compare();
             expect(TK_RPAREN, ")");
             return d;
         } else if (cur.type == TK_IDENT) {
@@ -819,8 +865,18 @@ public:
             Lexer peekL = L;
             Token peek = peekL.next();
             if (peek.type == TK_LPAREN) {
-                callExpr();
-                return false;
+                // 可能是内置函数（含 len/str/int/float）
+                uint8_t bid = builtinId(name);
+                if (bid != 0xFF) {
+                    callBuiltin(bid);
+                    // 返回类型：str() 返回字符串，其余返回 int/double
+                    if (bid == BID_str) return RT_STR;
+                    if (bid == BID_float) return RT_DOUBLE;
+                    return RT_INT;
+                } else {
+                    callUserFunc();
+                    return RT_INT; // 简化：用户函数返回类型不精确追踪
+                }
             } else {
                 VarInfo vi = syms.resolve(name);
                 if (vi.kind == VarInfo::LOCAL) {
@@ -834,68 +890,85 @@ public:
                     currentCode->u16(vi.slot);
                 }
                 advance();
-                return false;
+                return RT_INT; // 变量类型动态，编译期不精确追踪
             }
         } else {
             throw runtime_error("语法错误: 无法解析 '" + cur.text + "'");
         }
     }
 
-    // 函数调用
-    void callExpr(bool discardReturn = false) {
-        string funcName = cur.text;
+    // 该内置函数是否有"返回值"（语句级调用时需要 POP）
+    bool builtinHasReturn(uint8_t bid) const {
+        // pr/prln 是语句型，无返回值；其余（inp/len/str/int/float）都有返回值
+        return (bid != BID_pr && bid != BID_prln);
+    }
+
+    // 调用内置函数（含 len/str/int/float/pr/prln/inp）
+    // discardReturn: 是否为语句级调用（无人接收返回值）→ 有返回值时追加 POP
+    void callBuiltin(uint8_t bid, bool discardReturn = false) {
         advance(); // func name
         expect(TK_LPAREN, "(");
-
-        if (funcName == "pr" || funcName == "prln" || funcName == "inp") {
-            uint8_t argc = 0;
-            if (cur.type != TK_RPAREN) {
-                argc = 1;
-                compare(false);
-                while (cur.type == TK_COMMA) {
-                    advance();
-                    compare(false);
-                    argc++;
-                }
+        uint8_t argc = 0;
+        if (cur.type != TK_RPAREN) {
+            argc = 1;
+            compare(); // 参数表达式（可能返回任意类型）
+            while (cur.type == TK_COMMA) {
+                advance();
+                compare();
+                argc++;
             }
-            expect(TK_RPAREN, ")");
-            uint8_t bid;
-            if (funcName == "pr") bid = BID_pr;
-            else if (funcName == "prln") bid = BID_prln;
-            else bid = BID_inp;
-            currentCode->emit(0x02);
-            currentCode->u8(bid);
-            currentCode->u8(argc);
+        }
+        expect(TK_RPAREN, ")");
+        currentCode->emit(0x02);
+        currentCode->u8(bid);
+        currentCode->u8(argc);
+        if (discardReturn && builtinHasReturn(bid)) {
+            currentCode->emit(0x43); // POP 丢弃返回值
+        }
+    }
+
+    // 调用用户自定义函数
+    // discardReturn: 语句级调用 → 追加 POP（用户函数总有返回值）
+    void callUserFunc(bool discardReturn = false) {
+        string funcName = cur.text;
+        advance();
+        expect(TK_LPAREN, "(");
+        auto it = syms.functions.find(funcName);
+        if (it == syms.functions.end()) throw runtime_error("未定义的函数: " + funcName);
+        uint16_t funcId = it->second;
+        uint16_t expectedArgs = syms.funcParamCounts[funcId];
+
+        uint8_t argc = 0;
+        if (cur.type != TK_RPAREN) {
+            argc = 1;
+            compare();
+            while (cur.type == TK_COMMA) {
+                advance();
+                compare();
+                argc++;
+            }
+        }
+        expect(TK_RPAREN, ")");
+
+        if (argc != (uint8_t)expectedArgs) {
+            throw runtime_error("函数 '" + funcName + "' 参数数量不匹配: 期望 " +
+                to_string(expectedArgs) + "，得到 " + to_string(argc));
+        }
+
+        currentCode->emit(0x41);
+        currentCode->u16(funcId);
+        currentCode->u8(argc);
+        if (discardReturn) currentCode->emit(0x43); // POP
+    }
+
+    // callExpr：语句级调用（用于 exprStmt 中的函数调用）
+    void callExpr(bool discardReturn = false) {
+        string name = cur.text;
+        uint8_t bid = builtinId(name);
+        if (bid != 0xFF) {
+            callBuiltin(bid, discardReturn);
         } else {
-            auto it = syms.functions.find(funcName);
-            if (it == syms.functions.end()) throw runtime_error("未定义的函数: " + funcName);
-            uint16_t funcId = it->second;
-            uint16_t expectedArgs = syms.funcParamCounts[funcId];
-
-            uint8_t argc = 0;
-            if (cur.type != TK_RPAREN) {
-                argc = 1;
-                compare(false);
-                while (cur.type == TK_COMMA) {
-                    advance();
-                    compare(false);
-                    argc++;
-                }
-            }
-            expect(TK_RPAREN, ")");
-
-            if (argc != (uint8_t)expectedArgs) {
-                throw runtime_error("函数 '" + funcName + "' 参数数量不匹配: 期望 " +
-                    to_string(expectedArgs) + "，得到 " + to_string(argc));
-            }
-
-            currentCode->emit(0x41); // CALL_FUNC
-            currentCode->u16(funcId);
-            currentCode->u8(argc);
-
-            // 语句级调用（如单独一行的 foo()）：返回值无人接收，必须丢弃，
-            // 否则会残留在操作数栈上，既浪费空间又会被后续的 pr() 误打印。
-            if (discardReturn) currentCode->emit(0x43); // POP
+            callUserFunc(discardReturn);
         }
     }
 
@@ -918,7 +991,7 @@ public:
         output.write(out);
 
         ofstream f(path, ios::binary);
-        f.write((const char*)out.data(), out.size());
+        f.write((const char*)out.data(), static_cast<streamsize>(out.size()));
     }
 };
 
@@ -928,8 +1001,16 @@ public:
 int main(int argc, char** argv) {
     string inPath, outPath;
     if (argc > 1) {
-        inPath = argv[1];
-        if (argc > 2) outPath = argv[2];
+        for (int i = 1; i < argc; i++) {
+            string a = argv[i];
+            if (a == "-o" && i + 1 < argc) {
+                outPath = argv[++i];
+            } else if (!inPath.empty() && outPath.empty() && a[0] != '-') {
+                outPath = a; // 位置式：第二个非flag参数作为输出
+            } else if (inPath.empty()) {
+                inPath = a;
+            }
+        }
     } else {
         cout << "Ae 编译器 (aec) - 输入源文件路径: ";
         getline(cin, inPath);

@@ -1,5 +1,6 @@
 // =============================================================================
 //  Ae 虚拟机 (ae = Ae VM)  ——  支持自定义函数 + 局部变量 + 递归
+//                            + 字符串拼接 + len/str/int/float 内置函数
 // =============================================================================
 
 #include <iostream>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <sstream>
+#include <iomanip>
 
 using namespace std;
 
@@ -94,7 +96,44 @@ public:
         if (v.kind == VAL_DOUBLE) return v.f;
         if (v.kind == VAL_INT)    return (double)v.i;
         if (v.kind == VAL_BOOL)   return (double)v.i;
+        if (v.kind == VAL_STR) {
+            if (!v.str || v.str->empty()) return 0.0;
+            try { return stod(*v.str); } catch (...) { return 0.0; }
+        }
         return 0.0;
+    }
+
+    // 将任意值转为字符串（用于字符串拼接 / str() 函数）
+    string toString(const Value& v) {
+        if (v.kind == VAL_STR) {
+            return v.str ? *v.str : "";
+        } else if (v.kind == VAL_BOOL) {
+            return v.i ? "true" : "false";
+        } else if (v.kind == VAL_DOUBLE) {
+            ostringstream oss;
+            oss << fixed << setprecision(6) << v.f;
+            string s = oss.str();
+            // 去掉末尾多余的 0
+            size_t dot = s.find('.');
+            if (dot != string::npos) {
+                while (s.size() > dot + 2 && s.back() == '0') s.pop_back();
+                if (s.back() == '.') s.pop_back();
+            }
+            return s;
+        } else {
+            return to_string(v.i);
+        }
+    }
+
+    int64_t toInt(const Value& v) {
+        if (v.kind == VAL_INT)    return v.i;
+        if (v.kind == VAL_DOUBLE) return (int64_t)v.f;
+        if (v.kind == VAL_BOOL)   return v.i;
+        if (v.kind == VAL_STR) {
+            if (!v.str || v.str->empty()) return 0;
+            try { return stoll(*v.str); } catch (...) { return 0; }
+        }
+        return 0;
     }
 
     bool isFalse(const Value& v) const {
@@ -106,7 +145,6 @@ public:
     }
 
     // 预处理：扫描所有 FUNC_DEF 指令，建立函数表
-    // 这样 CALL_FUNC 时函数已注册（即使定义在使用之后）
     void preScanFunctions() {
         size_t savedPC = pc;
         pc = 0;
@@ -122,41 +160,38 @@ public:
                 fd.funcId     = funcId;
                 fd.paramCount = paramCount;
                 fd.localCount = localCount;
-                fd.entryPC    = (uint32_t)pc;  // 紧接着的就是函数体
+                fd.entryPC    = (uint32_t)pc;
                 fd.codeSize   = codeSize;
                 if (funcId >= funcs.size()) funcs.resize(funcId + 1);
                 funcs[funcId] = fd;
-                pc += codeSize; // 跳过函数体
+                pc += codeSize;
             } else if (op == 0x03) { // HALT
-                break; // 不应到达函数定义区（在 HALT 之后）
+                break;
             } else {
-                // 其他指令：粗略跳过（对于预处理够用）
                 skipInstruction(op);
             }
         }
-        pc = savedPC; // 恢复到 0
+        pc = savedPC;
     }
 
-    // 粗略跳过一条指令的操作数（预处理用）
     void skipInstruction(uint8_t op) {
         switch (op) {
-            case 0x01: pc += 2; break; // LOAD_CONST u16
-            case 0x02: pc += 2; break; // CALL u8 u8
-            case 0x04: pc += 2; break; // STORE u16
-            case 0x05: pc += 2; break; // LOAD_VAR u16
-            case 0x30: pc += 2; break; // LOCAL_STORE u16
-            case 0x31: pc += 2; break; // LOCAL_LOAD u16
-            case 0x41: pc += 3; break; // CALL_FUNC u16 u8
-            case 0x2A: pc += 2; break; // JZ u16
-            case 0x2B: pc += 2; break; // JMP u16
-            // 其余为无操作数指令，pc 已在调用处前进 1
+            case 0x01: pc += 2; break;
+            case 0x02: pc += 2; break;
+            case 0x04: pc += 2; break;
+            case 0x05: pc += 2; break;
+            case 0x30: pc += 2; break;
+            case 0x31: pc += 2; break;
+            case 0x41: pc += 3; break;
+            case 0x2A: pc += 2; break;
+            case 0x2B: pc += 2; break;
             default: break;
         }
     }
 
     void run() {
-        preScanFunctions(); // 先建立函数表
-        pc = 0;            // 从头开始执行
+        preScanFunctions();
+        pc = 0;
         while (pc < code.size()) {
             uint8_t op = code[pc++];
             switch (op) {
@@ -210,7 +245,16 @@ public:
                     push(Value(l.i / r.i));
                     break;
                 }
-                case 0x0A: { Value r = pop(), l = pop(); push(Value(toDouble(l) + toDouble(r))); break; }
+                case 0x0A: { // FADD（浮点加法，也用于字符串拼接的运行时）
+                    Value r = pop(), l = pop();
+                    // 如果两侧任一为字符串 → 字符串拼接
+                    if (l.kind == VAL_STR || r.kind == VAL_STR) {
+                        push(Value(toString(l) + toString(r)));
+                    } else {
+                        push(Value(toDouble(l) + toDouble(r)));
+                    }
+                    break;
+                }
                 case 0x0B: { Value r = pop(), l = pop(); push(Value(toDouble(l) - toDouble(r))); break; }
                 case 0x0C: { Value r = pop(), l = pop(); push(Value(toDouble(l) * toDouble(r))); break; }
                 case 0x0D: { // FDIV
@@ -228,13 +272,31 @@ public:
                     break;
                 }
 
-                // ─── 整数比较 ───
-                case 0x10: { Value r = pop(), l = pop(); push(Value((bool)(l.i == r.i))); break; }
-                case 0x11: { Value r = pop(), l = pop(); push(Value((bool)(l.i != r.i))); break; }
-                case 0x12: { Value r = pop(), l = pop(); push(Value((bool)(l.i <  r.i))); break; }
-                case 0x13: { Value r = pop(), l = pop(); push(Value((bool)(l.i <= r.i))); break; }
-                case 0x14: { Value r = pop(), l = pop(); push(Value((bool)(l.i >  r.i))); break; }
-                case 0x15: { Value r = pop(), l = pop(); push(Value((bool)(l.i >= r.i))); break; }
+                // ─── 整数比较（字符串按字典序派发）───
+                case 0x10: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str == *r.str)));
+                    else { push(Value((bool)(l.i == r.i))); }
+                    break; }
+                case 0x11: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str != *r.str)));
+                    else { push(Value((bool)(l.i != r.i))); }
+                    break; }
+                case 0x12: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str <  *r.str)));
+                    else { push(Value((bool)(l.i <  r.i))); }
+                    break; }
+                case 0x13: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str <= *r.str)));
+                    else { push(Value((bool)(l.i <= r.i))); }
+                    break; }
+                case 0x14: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str >  *r.str)));
+                    else { push(Value((bool)(l.i >  r.i))); }
+                    break; }
+                case 0x15: { Value r = pop(), l = pop();
+                    if (l.kind == VAL_STR && r.kind == VAL_STR) push(Value((bool)(*l.str >= *r.str)));
+                    else { push(Value((bool)(l.i >= r.i))); }
+                    break; }
 
                 // ─── 浮点比较 ───
                 case 0x16: { Value r = pop(), l = pop(); push(Value((bool)(toDouble(l) == toDouble(r)))); break; }
@@ -274,7 +336,7 @@ public:
                 }
 
                 // ─── 函数定义 ───
-                case 0x40: { // FUNC_DEF u16(funcId) u16(paramCount) u16(localCount) u32(codeSize)
+                case 0x40: { // FUNC_DEF
                     uint16_t funcId    = readU16(code, pc);
                     uint16_t paramCount = readU16(code, pc);
                     uint16_t localCount = readU16(code, pc);
@@ -283,12 +345,10 @@ public:
                     fd.funcId     = funcId;
                     fd.paramCount = paramCount;
                     fd.localCount = localCount;
-                    fd.entryPC    = (uint32_t)pc;  // 紧接着的就是函数体
+                    fd.entryPC    = (uint32_t)pc;
                     fd.codeSize   = codeSize;
-                    // 确保函数表足够大
                     if (funcId >= funcs.size()) funcs.resize(funcId + 1);
                     funcs[funcId] = fd;
-                    // 跳过函数体（在调用时才执行）
                     pc += codeSize;
                     break;
                 }
@@ -302,15 +362,12 @@ public:
                 }
 
                 case 0x42: { // RET
-                    // 弹出当前帧，恢复返回地址
                     if (callStack.empty()) {
-                        // 顶层 return → 等同于 HALT
                         return;
                     }
                     CallFrame& frame = callStack.back();
                     size_t retPC = frame.returnPC;
                     callStack.pop_back();
-                    // 恢复 currentLocals
                     if (callStack.empty()) {
                         currentLocals = nullptr;
                     } else {
@@ -320,7 +377,7 @@ public:
                     break;
                 }
 
-                case 0x43: { // POP  丢弃栈顶（语句级调用丢弃返回值）
+                case 0x43: { // POP
                     popValue();
                     break;
                 }
@@ -336,40 +393,30 @@ public:
         if (funcId >= funcs.size()) throw runtime_error("调用未定义的函数 id=" + to_string(funcId));
         const FuncDef& fd = funcs[funcId];
 
-        // 收集参数（从栈上弹出，顺序是 param0..paramN-1）
         vector<Value> args(argc);
         for (int i = argc - 1; i >= 0; i--) {
             args[i] = pop();
         }
 
-        // 创建新帧
         CallFrame frame;
         frame.funcId   = funcId;
-        frame.returnPC = pc;  // 记录返回地址（CALL_FUNC 指令后的位置）
-        // 局部变量区：参数在前，然后是普通局部变量
+        frame.returnPC = pc;
         frame.locals.resize(fd.localCount);
         for (uint16_t i = 0; i < argc && i < fd.paramCount; i++) {
             frame.locals[i] = args[i];
         }
-        // 剩余参数位置保持默认零值
 
-        // 压入调用栈
         callStack.push_back(move(frame));
         currentLocals = &(callStack.back().locals);
 
-        // 跳转到函数入口
         pc = fd.entryPC;
-        // 注意：不在这里执行函数体，run() 循环会继续从 pc 处执行
-        // 函数体执行完毕后遇到 RET 指令返回
     }
 
-    // 调用内置函数（funcId 0/1/2）
-    // 约定：调用前栈顶向下的 argc 个值就是本次实参。我们只消费这 argc
-    // 个参数，绝不触碰栈中更早的残留值（例如未被接收的函数返回值）。
+    // 调用内置函数（funcId 0/1/2/3/4/5/6）
+    //   0=pr, 1=inp, 2=prln, 3=len, 4=str, 5=int, 6=float
     void invoke(uint8_t funcId, uint8_t argc) {
         if (funcId == 0 || funcId == 2) {
             // pr(...) / prln(...)
-            // 从栈上弹出正好 argc 个实参（参数按从左到右的顺序入栈，故先弹出的是最右）
             vector<Value> args(argc);
             for (uint8_t i = 0; i < argc; i++) args[argc - 1 - i] = pop();
 
@@ -377,20 +424,46 @@ public:
                 if (i > 0) cout << " ";
                 printValue(args[i]);
             }
-            if (funcId == 2) cout << endl;  // prln 附加换行
+            if (funcId == 2) cout << endl;
         } else if (funcId == 1) {
-            // inp(...)
+            // inp()
+            if (argc > 0) pop(); // 忽略多余参数
             string line;
             if (!getline(cin, line)) {
                 throw runtime_error("inp() 读取输入失败（遇到 EOF）");
             }
             push(Value(make_shared<string>(line)));
+        } else if (funcId == 3) {
+            // len(x) → int
+            Value v = pop();
+            int64_t len = 0;
+            if (v.kind == VAL_STR) len = v.str ? (int64_t)v.str->size() : 0;
+            else if (v.kind == VAL_BOOL) len = 0;
+            else if (v.kind == VAL_INT) {
+                // 整数的十进制位数
+                int64_t n = v.i;
+                if (n < 0) n = -n;
+                if (n == 0) len = 1;
+                else { while (n > 0) { len++; n /= 10; } }
+            } else len = 0;
+            push(Value(len));
+        } else if (funcId == 4) {
+            // str(x) → string
+            Value v = pop();
+            push(Value(make_shared<string>(toString(v))));
+        } else if (funcId == 5) {
+            // int(x) → int64
+            Value v = pop();
+            push(Value(toInt(v)));
+        } else if (funcId == 6) {
+            // float(x) → double
+            Value v = pop();
+            push(Value(toDouble(v)));
         } else {
             throw runtime_error("调用未定义的函数 id=" + to_string(funcId));
         }
     }
 
-    // 丢弃栈顶值（用于"语句级函数调用"丢弃返回值，防止栈增长 / 误打印）
     void popValue() { (void)pop(); }
 
     void printValue(const Value& v) {
@@ -420,24 +493,35 @@ public:
         p += 2; // flags
 
         uint32_t poolCount = readU32(all, p);
+        if (poolCount > 1024u * 1024u) throw runtime_error("常量池过大: " + to_string(poolCount));
         constPool.resize(poolCount);
         for (uint32_t i = 0; i < poolCount; i++) {
+            if (p >= all.size()) throw runtime_error("常量池截断（条目 #" + to_string(i) + "）");
             uint8_t tag = readU8(all, p);
+            if (tag != Const::UTF8 && tag != Const::INT32 && tag != Const::DOUBLE)
+                throw runtime_error("未知的常量池 tag: 0x" + to_string(tag) + "（条目 #" + to_string(i) + "）");
             constPool[i].tag = (decltype(Const::tag))tag;
             if (tag == Const::UTF8) {
+                if (p + 4 > all.size()) throw runtime_error("常量池 UTF-8 长度截断");
                 uint32_t len = readU32(all, p);
+                if (len > all.size() - p) throw runtime_error("常量池 UTF-8 数据截断（len=" + to_string(len) + "）");
                 constPool[i].s = string((const char*)(all.data() + p), len);
                 p += len;
             } else if (tag == Const::INT32) {
+                if (p + 4 > all.size()) throw runtime_error("常量池 int32 截断");
                 constPool[i].i = (int32_t)readU32(all, p);
             } else if (tag == Const::DOUBLE) {
+                if (p + 8 > all.size()) throw runtime_error("常量池 double 截断");
                 uint64_t bits = 0;
                 for (int s = 56; s >= 0; s -= 8) bits = (bits << 8) | readU8(all, p);
                 memcpy(&constPool[i].d, &bits, 8);
             }
         }
 
+        if (p + 4 > all.size()) throw runtime_error("codeLength 字段截断");
         uint32_t codeLen = readU32(all, p);
+        if (codeLen > all.size() - p) throw runtime_error("codeLength 越界: " + to_string(codeLen) + " > 剩余 " + to_string(all.size() - p) + " 字节");
+        if (codeLen > 16u * 1024u * 1024u) throw runtime_error("codeLength 过大: " + to_string(codeLen));
         code.assign(all.begin() + p, all.begin() + p + codeLen);
     }
 };

@@ -17,7 +17,16 @@ static uint16_t readU16(const vector<uint8_t>& b, size_t& p) { uint16_t v=(uint1
 static uint32_t readU32(const vector<uint8_t>& b, size_t& p) { uint32_t v=(uint32_t)((b[p]<<24)|(b[p+1]<<16)|(b[p+2]<<8)|b[p+3]); p+=4; return v; }
 
 static const char* funcName(uint8_t id) {
-    switch (id) { case 0: return "pr"; case 1: return "inp"; case 2: return "prln"; default: return "?"; }
+    switch (id) {
+        case 0: return "pr";
+        case 1: return "inp";
+        case 2: return "prln";
+        case 3: return "len";
+        case 4: return "str";
+        case 5: return "int";
+        case 6: return "float";
+        default: return "?";
+    }
 }
 
 int main(int argc, char** argv) {
@@ -40,7 +49,7 @@ int main(int argc, char** argv) {
 
     size_t p = 4;
     uint8_t major = all[p++], minor = all[p++];
-    (void)readU16(all, p); // flags（消费 2 字节）
+    (void)readU16(all, p); // flags
     uint32_t poolCount = readU32(all, p);
 
     cout << "; ╔══════════════════════════════════════════════════════════╗" << endl;
@@ -95,7 +104,7 @@ int main(int argc, char** argv) {
             case 0x07: cout << "ISUB"; break;
             case 0x08: cout << "IMUL"; break;
             case 0x09: cout << "IDIV"; break;
-            case 0x0A: cout << "FADD"; break;
+            case 0x0A: cout << "FADD   ; 浮点加 / 字符串拼接"; break;
             case 0x0B: cout << "FSUB"; break;
             case 0x0C: cout << "FMUL"; break;
             case 0x0D: cout << "FDIV"; break;
@@ -117,10 +126,8 @@ int main(int argc, char** argv) {
                         cout << "JZ         +" << off << "  ; 条件为假则跳"; break; }
             case 0x2B: { uint16_t off = readU16(all, p);
                         cout << "JMP        +" << off; break; }
-            // 局部变量
             case 0x30: { uint16_t s = readU16(all, p); cout << "LOCAL_STORE slot@" << s; break; }
             case 0x31: { uint16_t s = readU16(all, p); cout << "LOCAL_LOAD  slot@" << s; break; }
-            // 函数
             case 0x40: { uint16_t fid = readU16(all, p);
                          uint16_t paramCount = readU16(all, p);
                          uint16_t lc = readU16(all, p);
