@@ -365,7 +365,7 @@ $ aed hello.aeo
 
 ## 文档与官网
 
-- 官网源码仓库：<https://github.com/AeLanguage/aelanguage.github.io>
+- 官网：<aelanguage.github.io>
 - 站点文档分三大块：
   **教学文档**（12 章，从“把 Ae 跑起来”到综合练习）、
   **库与函数**（12 章，每个函数都有签名 + 说明 + 小示例）、
