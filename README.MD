@@ -74,19 +74,19 @@ $ ae hello.aeo
 ```
 Ae/
 ├─ Apt/                 语言实现（源码都在这儿）
-│  ├─ aec.cpp           编译器：词法/语法/类型检查 → AeBc 1.7 字节码
-│  ├─ ae.cpp            虚拟机：加载 .aeo、执行、诊断与调用栈
-│  ├─ aed.cpp           反汇编器：把 .aeo 打成可读的指令清单
-│  ├─ ae_console.h      Windows 控制台统一走 UTF-8（GBK 的 cmd 里中文不乱码）
-│  ├─ ae_diag.h         诊断渲染：错误码 / 摘录 / 光标 / help / 栈
-│  ├─ ae_native.h       原生库 ABI（当前 v4：脚本参数、读表、回调 Ae 函数）
-│  ├─ ae_libhost.h      宿主侧加载器：找库的目录顺序与候选文件名
-│  └─ lib/              标准库（4 个原生库 + 2 个 Ae 模块）
-│     ├─ io.cpp  os.cpp  path.cpp     跨平台原生库
-│     ├─ ui.cpp                       Windows 专用（GDI+），近 4000 行
-│     ├─ ae_libutil.h                 库共用工具：参数检查 / lastError
-│     ├─ args.m  json.m               用 Ae 自己写的模块（不用编译）
-│     └─ *.dll / *.so                 构建产物（放这里就能被 imp 找到）
+├─ aec.cpp           编译器：词法/语法/类型检查 → AeBc 1.7 字节码
+├─ ae.cpp            虚拟机：加载 .aeo、执行、诊断与调用栈
+├─ aed.cpp           反汇编器：把 .aeo 打成可读的指令清单
+├─ ae_console.h      Windows 控制台统一走 UTF-8（GBK 的 cmd 里中文不乱码）
+├─ ae_diag.h         诊断渲染：错误码 / 摘录 / 光标 / help / 栈
+├─ ae_native.h       原生库 ABI（当前 v4：脚本参数、读表、回调 Ae 函数）
+├─ ae_libhost.h      宿主侧加载器：找库的目录顺序与候选文件名
+└─ lib/              标准库（4 个原生库 + 2 个 Ae 模块）
+│  ├─ io.cpp  os.cpp  path.cpp     跨平台原生库
+│  ├─ ui.cpp                       Windows 专用（GDI+），近 4000 行
+│  ├─ ae_libutil.h                 库共用工具：参数检查 / lastError
+│  ├─ args.m  json.m               用 Ae 自己写的模块（不用编译）
+│  └─ *.dll / *.so                 构建产物（放这里就能被 imp 找到）
 ├─ Test/                回归测试
 │  ├─ run.ps1           跑 cases/ 与 errors/（默认 70 个用例全绿）
 │  ├─ cases/*.ae|*.out  正向用例：必须编译并成功运行，输出与 .out 一致
@@ -113,13 +113,13 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 | 源文件 | 产物 | 链接参数 |
 |---|---|---|
-| `Apt\aec.cpp` | `aec.exe` | — |
-| `Apt\ae.cpp` | `ae.exe` | — |
-| `Apt\aed.cpp` | `aed.exe` | — |
-| `Apt\lib\io.cpp` | `lib\io.dll` | — |
-| `Apt\lib\os.cpp` | `lib\os.dll` | — |
-| `Apt\lib\path.cpp` | `lib\path.dll` | — |
-| `Apt\lib\ui.cpp` | `lib\ui.dll` | `-luser32 -lgdi32 -lgdiplus -lwinmm` |
+| `aec.cpp` | `aec.exe` | — |
+| `ae.cpp` | `ae.exe` | — |
+| `aed.cpp` | `aed.exe` | — |
+| `lib\io.cpp` | `lib\io.dll` | — |
+| `lib\os.cpp` | `lib\os.dll` | — |
+| `lib\path.cpp` | `lib\path.dll` | — |
+| `lib\ui.cpp` | `lib\ui.dll` | `-luser32 -lgdi32 -lgdiplus -lwinmm` |
 
 脚本参数：
 
@@ -161,12 +161,12 @@ CXX=clang++ ./build.sh          # 换编译器
 手动等价于：
 
 ```bash
-g++ -std=c++17 -O2 -Wall Apt/aec.cpp -o aec
-g++ -std=c++17 -O2 -Wall Apt/ae.cpp  -o ae
-g++ -std=c++17 -O2 -Wall Apt/aed.cpp -o aed
-g++ -std=c++17 -O2 -Wall -shared -fPIC Apt/lib/io.cpp   -o lib/libio.so
-g++ -std=c++17 -O2 -Wall -shared -fPIC Apt/lib/os.cpp   -o lib/libos.so
-g++ -std=c++17 -O2 -Wall -shared -fPIC Apt/lib/path.cpp -o lib/libpath.so
+g++ -std=c++17 -O2 -Wall aec.cpp -o aec
+g++ -std=c++17 -O2 -Wall ae.cpp  -o ae
+g++ -std=c++17 -O2 -Wall aed.cpp -o aed
+g++ -std=c++17 -O2 -Wall -shared -fPIC lib/io.cpp   -o lib/libio.so
+g++ -std=c++17 -O2 -Wall -shared -fPIC lib/os.cpp   -o lib/libos.so
+g++ -std=c++17 -O2 -Wall -shared -fPIC lib/path.cpp -o lib/libpath.so
 ```
 
 > `ui` 用的是 Windows 的 GDI+，**只能在 Windows 上编译**；Linux/macOS 上其余部分都能跑。
@@ -374,5 +374,4 @@ $ aed hello.aeo
 - 文档里的每个示例都真编译、真运行过（示例脚本与官网源码放在一起维护）。
 
 ## 许可证
-
-仓库里目前还没有 `LICENSE` 文件——**暂未声明许可证**。在你补上之前，默认保留所有权利；想用 MIT / Apache-2.0 之类的话，加一个 `LICENSE` 并在本段替换说明即可。
+<LICENSE>
