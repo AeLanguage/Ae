@@ -1,0 +1,94 @@
+// P1-3 验收：数值 for + 表遍历
+func main() {
+    prln("── 数值 for ──")
+    local sum = 0
+    for i = 1, 5 {
+        sum += i
+    }
+    prln("1..5 求和 =", sum)
+
+    pr("倒序: ")
+    for i = 5, 1, -1 {
+        pr(i, "")
+    }
+    prln("")
+
+    pr("步长 2: ")
+    for i = 1, 9, 2 {
+        pr(i, "")
+    }
+    prln("")
+
+    pr("浮点步长: ")
+    for f = 0.0, 1.0, 0.5 {
+        pr(f, "")
+    }
+    prln("")
+
+    pr("continue/break: ")
+    for i = 1, 10 {
+        if (i == 3) { continue }
+        if (i == 6) { break }
+        pr(i, "")
+    }
+    prln("")
+
+    prln("循环变量遮蔽 (外层 i 仍为 99):", forShadow())
+
+    prln("── 表遍历 ──")
+    local t = {10, 20, 30, name = "Ae", flag = true}
+    pr("for k, v in t : ")
+    for k, v in t {
+        pr(k, "=", v, " ")
+    }
+    prln("")
+
+    pr("for v in t    : ")
+    for v in t {
+        pr(v, " ")
+    }
+    prln("")
+
+    local total = 0
+    for k, v in {1, 2, 3, 4} {
+        total += v
+    }
+    prln("数组段求和 =", total)
+
+    prln("空表遍历次数:", emptyCount())
+    prln("嵌套遍历:")
+    local m = {a = {1, 2}, b = {3}}
+    for k1, v1 in m {
+        for k2, v2 in v1 {
+            pr(k1, "[", k2, "]=", v2, " ")
+        }
+    }
+    prln("")
+    prln("快照语义（遍历前先取键，表内改动不影响本轮）:", snapshot())
+}
+
+func forShadow() {
+    local i = 99
+    for i = 1, 3 {
+        // 这里的 i 是循环变量
+    }
+    return i
+}
+
+func emptyCount() {
+    local n = 0
+    for k, v in {} {
+        n += 1
+    }
+    return n
+}
+
+func snapshot() {
+    local t = {1, 2, 3}
+    local seen = 0
+    for k, v in t {
+        seen += 1
+        t[10] = 100
+    }
+    return seen
+}

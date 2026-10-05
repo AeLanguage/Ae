@@ -1,0 +1,2 @@
+imp path
+func main() { prln(path.replaceExt("a.txt")) }

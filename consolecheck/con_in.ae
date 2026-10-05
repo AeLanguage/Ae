@@ -1,0 +1,4 @@
+func main() {
+    local s = inp("请输入: ")
+    prln("收到 =", s)
+}

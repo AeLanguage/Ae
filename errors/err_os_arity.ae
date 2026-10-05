@@ -1,0 +1,2 @@
+imp os
+func main() { prln(os.getEnv()) }

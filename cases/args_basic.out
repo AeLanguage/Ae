@@ -1,0 +1,26 @@
+默认 => v= false out= out.txt in= {} lv= 0 rest= {}
+长等号 => v= false out= a.json in= {} lv= 0 rest= {}
+长分开 => v= false out= b.json in= {} lv= 0 rest= {}
+短粘连 => v= false out= c.json in= {} lv= 0 rest= {}
+连写标志 => v= true out= d.json in= {} lv= 0 rest= {}
+计数 => v= false out= out.txt in= {} lv= 3 rest= {}
+可重复 => v= false out= out.txt in= {src, lib} lv= 0 rest= {}
+位置参数 => v= false out= out.txt in= {} lv= 0 rest= {a.txt, b.txt}
+负数位置 => v= false out= out.txt in= {} lv= 0 rest= {-5}
+分隔符 => v= false out= out.txt in= {} lv= 0 rest= {-v, --out=y}
+未知选项 => 错误: 未知选项 --nope
+选项缺值 => 错误: 选项 --out 需要一个值
+flag带值 => 错误: 选项 --verbose 不接受值
+缺必填 => 错误: 缺少必填选项 --must
+help = true error = null
+intOr = 42 -1
+floatOr = 2.5 1.25
+用法: demo [选项] [参数...]
+
+选项:
+  -v, --verbose     详细输出
+  -o, --out <值>    输出文件 (默认: out.txt)
+  -i, --input <值>  输入目录 (可重复)
+  -l, --level       详细级别
+      --must <值>   必填项 [必填]
+  -h, --help        显示本帮助

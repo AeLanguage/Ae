@@ -1,0 +1,8 @@
+// 鼠标形状写错了：必须明确报错（以前会静默退回箭头，最难查）
+imp ui
+
+func main() {
+    local w = ui.window("坏光标", 120, 80)
+    local b = ui.rect(w, 10, 10, 60, 20)
+    ui.set(b, "cursor", "pointer")     // 想写 hand 的人常写成 pointer
+}

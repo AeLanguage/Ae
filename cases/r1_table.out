@@ -1,0 +1,9 @@
+t = {10, 20, 30, 100 = hundred, "name" = Ae}
+t[name] = Ae  t[100] = hundred  t[2] = 20
+len(t) = 3
+d = {null, null, null, null, null, null, seven, 14 = dyn}  d[7] = seven  d[14] = dyn
+nested = {1, {2, 99}, "sub" = {"x" = 42}}
+e = {null, null, null, null, a, b}  e[5] = a  e[6] = b
+s = {hello world, 123, a b c}
+s[1] = hello world  s[2] = 123  type(s[2]) = string
+v = {7, xy, 4}

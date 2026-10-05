@@ -1,0 +1,191 @@
+// =============================================================================
+//  第二批功能试玩 —— 亲手跑一下这批新东西（不会被 run.ps1 当成用例）
+//
+//  跑法（在 Test 目录下）：
+//      ..\Apt\aec.exe ui_batch2_demo.ae
+//      ..\Apt\ae.exe ui_batch2_demo.aeo
+//
+//  该看什么（对应本次更新的每一项）：
+//    ① 画布缓存  整个棋盘背景、和转圈的 10 朵花，各自只有【一份】画布：
+//                棋盘 486 块、每朵花 5 个图形，都只在建的时候画了一次，
+//                之后每帧只是"贴一张位图"。这是这批最重要的性能手段。
+//    ② 画布套画布 10 朵花的外部指针在转 —— 改的是【画布里那个图形】，
+//                一次属性改动让 10 朵花一起转（缓存失效自动传播到窗口）。
+//    ③ 图片     左上角图标来自 cases/ui_icon.png（真 PNG 解码，放大 3 倍）
+//    ④ 旋转     a) 黄条绕自己【包围盒中心】转  b) 蓝块绕【自己左上角】转
+//                c) 绿圆在"心跳"缩放（scale）
+//    ⑤ 文字折行 右上那段中文的折行宽度在呼吸 → 实时重排（wrap 是自己算的，
+//                所以"量出来的行数"和"画出来的行数"永远一致）
+//    ⑥ 无边框窗 右边那个独立小窗没有系统标题栏：拖【自绘标题栏】移动它，
+//                拖它的【边缘】改大小（无边框也能，库自己在 WM_NCHITTEST 认边缘），
+//                点自绘 ✕ 关闭、点自绘 — 最小化
+//    ⑦ 交互     鼠标移到花朵/按钮上会变手型（cursor）；点花朵会变大一下
+//    ⑧ Esc 退出主窗口（两个窗口都关掉脚本才结束）
+// =============================================================================
+imp ui
+imp os
+
+func findIcon() {
+    local tries = {"ui_icon.png", "cases/ui_icon.png", "Test/cases/ui_icon.png"}
+    local i = 1
+    while (i <= len(tries)) {
+        local im = ui.image(tries[i])
+        if (im != null) { return im }
+        i += 1
+    }
+    return null
+}
+
+func main() {
+    local w = ui.window("Ae 第二批试玩（Esc 退出）", 640, 420)
+    if (w == null) { prln("[-] 建窗口失败:", ui.lastError()) return }
+    ui.show(w)
+    ui.on(w, "keydown", func(e) { if (e.key == 27) { ui.close(w) } })
+
+    // ── ① 棋盘背景：486 块画进【一份画布】，每帧只贴一张 ──
+    local board = ui.canvas(640, 420)
+    local cy = 0
+    local tileN = 0
+    while (cy < 420) {
+        local cx = 0
+        while (cx < 640) {
+            if (((cx / 24) + (cy / 24)) % 2 == 0) {
+                local cell = ui.rect(board, cx, cy, 24, 24)
+                ui.setAll(cell, {fill = true, fillColor = "#161E26", stroke = 0})
+                tileN += 1
+            }
+            cx += 24
+        }
+        cy += 24
+    }
+    local boardImg = ui.drawImage(w, board, 0, 0)
+    ui.setAll(boardImg, {z = -90})
+    prln("[画布] 棋盘 = 一份画布 +", tileN, "块（只在建的时候画过一次）")
+
+    // ── ② 花朵画布：5 个图形，贴 10 份 ──
+    local flower = ui.canvas(48, 48)
+    local petal = ui.circle(flower, 24, 24, 16)
+    ui.setAll(petal, {fill = false, stroke = 5, strokeColor = "#F59E0B", aa = true})
+    local petal2 = ui.circle(flower, 24, 24, 9)
+    ui.setAll(petal2, {fill = false, stroke = 3, strokeColor = "#FBBF24", aa = true})
+    local core = ui.circle(flower, 24, 24, 5)
+    ui.setAll(core, {fill = true, fillColor = "#FDE68A", stroke = 0})
+    local spin = ui.rect(flower, 4, 22, 40, 4)
+    ui.setAll(spin, {fill = true, fillColor = "#EF4444", stroke = 0, z = 5})
+    prln("[画布] 一朵花 = 4 个图形；下面 10 朵都是贴同一张位图")
+
+    local px = {520, 560, 580, 570, 540, 500, 470, 450, 455, 480}
+    local py = {150, 190, 240, 290, 330, 340, 310, 260, 200, 160}
+    local flowers = {}
+    local i = 1
+    while (i <= 10) {
+        local f = ui.drawImage(w, flower, px[i], py[i], 48, 48)
+        ui.setAll(f, {z = 3, cursor = "hand"})
+        flowers[i] = f
+        i += 1
+    }
+
+    // ── ③ 图片（真 PNG，放大 3 倍）──
+    local ico = findIcon()
+    if (ico == null) {
+        prln("[图片] 没找到 ui_icon.png（在 Test 目录下跑就能找到）")
+    } else {
+        local ip = ui.drawImage(w, ico, 24, 24, 72, 72)
+        ui.setAll(ip, {z = 5, cursor = "hand"})
+        prln("[图片] ui_icon.png 原始尺寸 =", ui.props(ico).w, "x", ui.props(ico).h, "→ 放大 3 倍显示")
+    }
+
+    // ── ④ 旋转 / 缩放 ──
+    local bar = ui.rect(w, 250, 250, 140, 26)
+    ui.setAll(bar, {fill = true, fillColor = "#FACC15", stroke = 2, strokeColor = "#A16207", z = 6})
+    local dot = ui.circle(w, 250, 340, 20)
+    ui.setAll(dot, {fill = true, fillColor = "#22C55E", stroke = 0, z = 6, cursor = "hand"})
+    local pin = ui.rect(w, 150, 300, 44, 10)
+    ui.setAll(pin, {fill = true, fillColor = "#38BDF8", stroke = 0, z = 6,
+                    anchorX = 150, anchorY = 300})       // 显式锚点：绕自己的左上角转
+
+    // ── ⑤ 文字折行（wrap 在呼吸，能看见实时重排）──
+    local text = "文字折行是自己算的：这样「量出来的」和「画出来的」严格一致。宽度在呼吸，看到的就是实时重排。Ae 是底层库，输入框和光标定位要靠 measure 的逐字符宽度。"
+    local para = ui.text(w, 620, 40, text)
+    ui.setAll(para, {size = 15, color = "#E5E7EB", wrap = 200, lineGap = 4,
+                     align = "right", valign = "top", z = 7})
+    local m0 = ui.measure(text, {size = 15, wrap = 200, lineGap = 4})
+    prln("[折行] 200px 宽时：", m0.lines, "行，总高", m0.h, "px，逐字符宽度表", len(m0.charW), "项")
+
+    // ── ⑥ 无边框小窗：自绘标题栏 / 关闭 / 最小化，边缘还能拖大 ──
+    local fw = ui.window("无边框窗口", 260, 170)
+    ui.pos(fw, 700, 120)
+    ui.set(fw, "frameless", true)
+    ui.set(fw, "resizable", true)
+    ui.show(fw)
+
+    local fbg = ui.rect(fw, 0, 0, 260, 170)
+    ui.setAll(fbg, {fill = true, fillColor = "#1E293B", stroke = 0, z = -10})
+    local tbar = ui.rect(fw, 0, 0, 260, 34)
+    ui.setAll(tbar, {fill = true, fillColor = "#334155", stroke = 0, z = 1, cursor = "sizeall"})
+    local ttxt = ui.text(fw, 12, 17, "拖这里移动窗口")
+    ui.setAll(ttxt, {size = 15, color = "#E2E8F0", valign = "middle", z = 2, hits = false})
+    local minb = ui.rect(fw, 198, 6, 24, 22)
+    ui.setAll(minb, {fill = true, fillColor = "#1E3A8A", stroke = 0, z = 2, cursor = "hand"})
+    local mtxt = ui.text(fw, 210, 17, "—")
+    ui.setAll(mtxt, {size = 16, color = "#DBEAFE", align = "center", valign = "middle", z = 3, hits = false})
+    local xbtn = ui.rect(fw, 226, 6, 24, 22)
+    ui.setAll(xbtn, {fill = true, fillColor = "#7F1D1D", stroke = 0, z = 2, cursor = "hand"})
+    local xtxt = ui.text(fw, 238, 17, "×")
+    ui.setAll(xtxt, {size = 16, color = "#FEE2E2", align = "center", valign = "middle", z = 3, hits = false})
+    local fmsg = ui.text(fw, 130, 95, "没有系统标题栏\n拖上面的条 = 移动\n拖窗口边缘 = 改大小\n点 ✕ = 关，点 — = 最小化")
+    ui.setAll(fmsg, {size = 14, color = "#94A3B8", align = "center", valign = "middle", wrap = 220, lineGap = 2, z = 2})
+
+    ui.on(tbar, "mousedown", func(e) { ui.beginDrag(fw) })      // ★ 库自己拖（不进系统模态循环，动画照跑）
+    ui.on(tbar, "mouseenter", func(e) { ui.set(tbar, "fillColor", "#475569") })
+    ui.on(tbar, "mouseleave", func(e) { ui.set(tbar, "fillColor", "#334155") })
+    ui.on(xbtn, "click", func(e) { ui.close(fw) })
+    ui.on(xbtn, "mouseenter", func(e) { ui.set(xbtn, "fillColor", "#EF4444") })
+    ui.on(xbtn, "mouseleave", func(e) { ui.set(xbtn, "fillColor", "#7F1D1D") })
+    ui.on(minb, "click", func(e) { ui.minimize(fw) })
+    ui.on(fw, "resize", func(e) {                                 // 布局自己做（库不给布局引擎）
+        ui.set(fbg, "w", e.w)   ui.set(fbg, "h", e.h)
+        ui.set(tbar, "w", e.w)
+        ui.set(xbtn, "x", e.w - 34)
+        ui.set(minb, "x", e.w - 62)
+        ui.set(xtxt, "x", e.w - 22)
+        ui.set(mtxt, "x", e.w - 50)
+        ui.set(fmsg, "x", e.w / 2)
+        ui.set(fmsg, "wrap", e.w - 40)
+    })
+
+    // ── ⑦ 点花朵变大（事件里改属性）──
+    local grow = {}
+    local k = 1
+    while (k <= 10) {
+        local idx = k
+        ui.on(flowers[idx], "click", func(e) {
+            local g = 0
+            if (grow[idx] != null) { g = grow[idx] }
+            g += 1
+            grow[idx] = g
+            ui.set(flowers[idx], "scale", 1 + g * 0.25)
+        })
+        k += 1
+    }
+
+    paraRef = para
+    ui.on(w, "resize", func(e) {
+        if (paraRef != 0) { ui.set(paraRef, "wrap", e.w - 20) }   // 拖窗口即可看到重排
+    })
+
+    // ── 主循环 ──
+    prln("[+] 开始（Esc 退出主窗口；两个窗口都关掉脚本才结束）")
+    local t = 0
+    while (ui.count() > 0) {
+        t += 1
+        ui.set(bar, "angle", (t * 2) % 360)          // 绕包围盒中心转
+        ui.set(pin, "angle", (t * 3) % 360)          // 绕指定锚点转
+        ui.set(dot, "scale", 1 + (t % 60) / 60.0 * 0.6)   // 心跳缩放
+        ui.set(para, "wrap", 160 + (t % 80) * 1.6)   // 折行宽度呼吸 → 实时重排
+        ui.set(spin, "angle", (t * 4) % 360)         // ★ 改画布里的图形 → 10 朵花一起转
+        os.sleep(16)
+        ui.pump()
+    }
+    prln("[+] 退出（跑了", t, "帧）")
+}

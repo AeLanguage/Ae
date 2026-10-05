@@ -1,0 +1,13 @@
+// check_run.ps1 用的 ui 子程序：开窗口 + 定时器 + 事件回调，然后【故意不关窗口】就返回。
+// 期望：run() 收尾时把它们都清掉，父程序继续跑且不受影响。
+imp ui
+
+func main() {
+    prln("[uichild] 建窗口前 count=", ui.count())
+    local w = ui.window("子程序的窗口", 240, 160)
+    ui.show(w)
+    local box = ui.rect(w, 10, 10, 60, 40)
+    ui.on(box, "click", func(e) { prln("[uichild] 被点了（不该再出现）") })
+    ui.timer(30, func(e) { prln("[uichild] 定时器（不该再出现）") })
+    prln("[uichild] 开了窗口和定时器，直接返回，不关窗口")
+}

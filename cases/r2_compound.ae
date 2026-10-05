@@ -1,0 +1,30 @@
+// ── 回归 2：复合赋值 / 分号 / 转义 ──
+func main() {
+    local i = 10
+    i += 5
+    prln("i += 5 ->", i)
+    i -= 3
+    prln("i -= 3 ->", i)
+    i *= 2
+    prln("i *= 2 ->", i)
+    i /= 4
+    prln("i /= 4 ->", i)
+
+    local f = 1.5
+    f += 0.25
+    prln("f += 0.25 ->", f)
+    f *= 2
+    prln("f *= 2 ->", f)
+
+    local s = "ab"
+    s += "cd"
+    prln("s += \"cd\" ->", s)
+
+    // 分号作为语句分隔符
+    local n = 0;
+    n += 1; n += 1; n += 1;
+    prln("semicolon block ->", n)
+
+    prln("escapes: [\t] [\n] [\\] [\"]")
+    prln("concat with escapes:", "a\tb" + "|" + "c\nd")
+}

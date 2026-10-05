@@ -1,0 +1,71 @@
+// io 库验收：整文件读写 / 元信息 / 目录 / 流式 / 错误处理
+imp io
+
+func main() {
+    local dir = "io_scratch"
+    io.remove(dir)
+    io.mkdir(dir)
+    local path = dir + "/a.txt"
+
+    prln("── 整文件读写 ──")
+    prln("writeFile ->", io.writeFile(path, "第一行\n第二行\n第三行\n"))
+    local text = readFile(path)                    // 裸调（导入后全库函数可直接用）
+    prln("readFile 长度 =", len(text), "行数 =", len(readLines(path)))
+    prln("appendFile ->", appendFile(path, "第四行\n"))
+    prln("追加后行数 =", len(io.readLines(path)))
+
+    prln("── 元信息 ──")
+    prln("exists =", exists(path), "| isFile =", isFile(path), "| isDir =", isDir(path))
+    prln("size =", size(path), "| isDir(目录) =", io.isDir(dir))
+    prln("exists(不存在) =", exists(dir + "/nope.txt"))
+
+    prln("── 目录 ──")
+    io.writeFile(dir + "/b.txt", "bbb")
+    local names = listDir(dir)
+    prln("listDir 条目数 =", len(names), "| 排序后 =", sortStrings(names))
+
+    prln("── 流式读取 ──")
+    local h = io.open(path, "r")
+    prln("句柄 =", h > 0)
+    prln("readLine 1 =", readLine(h))
+    prln("readLine 2 =", readLine(h))
+    prln("tell =", tell(h) > 0)
+    prln("seek(0) =", seek(h, 0), "| readLine 回到首行 =", readLine(h) == "第一行")
+    prln("readAll 长度 > 0 =", len(readAll(h)) > 0)
+    prln("close =", close(h))
+
+    prln("── 流式写入 ──")
+    local w = open(dir + "/c.txt", "w")
+    prln("write 字节数 =", write(w, "xyz"), "| flush =", flush(w), "| close =", close(w))
+    prln("回读 =", readFile(dir + "/c.txt"))
+
+    prln("── 错误处理（不中断，用 lastError）──")
+    local missing = readFile(dir + "/missing.txt")
+    prln("读取不存在 =", missing, "| lastError 非空 =", len(io.lastError()) > 0)
+    prln("删除不存在 =", remove(dir + "/missing.txt"))
+
+    prln("── 复制 / 重命名 ──")
+    prln("copyFile =", copyFile(path, dir + "/copy.txt"), "| 副本存在 =", exists(dir + "/copy.txt"))
+    prln("rename =", rename(dir + "/copy.txt", dir + "/renamed.txt"), "| 新名存在 =", exists(dir + "/renamed.txt"))
+
+    prln("── 清理 ──")
+    prln("remove 全部 =", remove(dir + "/a.txt"), remove(dir + "/b.txt"), remove(dir + "/c.txt"), remove(dir + "/renamed.txt"))
+    prln("remove 目录 =", remove(dir), "| 目录已消失 =", isDir(dir) == false)
+}
+
+// 表里的字符串元素做插入排序（演示 Ae 自己写的库函数）
+func sortStrings(t) {
+    local n = len(t)
+    local i = 2
+    while (i <= n) {
+        local key = t[i]
+        local j = i - 1
+        while (j >= 1 and t[j] > key) {
+            t[j + 1] = t[j]
+            j -= 1
+        }
+        t[j + 1] = key
+        i += 1
+    }
+    return t
+}

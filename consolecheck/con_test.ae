@@ -1,0 +1,6 @@
+func main() {
+    prln("中文输出测试：你好，世界")
+    prln("ASCII ok")
+    pr("不带换行的中文提示: ")
+    prln("该换行了")
+}

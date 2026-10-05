@@ -1,0 +1,121 @@
+// =============================================================================
+//  第二批验收：画布（离屏） / 图片 / 贴图 / 旋转缩放 / 文字折行与度量 / 无边框窗口
+// -----------------------------------------------------------------------------
+//  判定方式：ui.pixel 看像素（画布的内容也能直接取色，不用开窗口）。
+//  注：ui.beginDrag 会让系统接管拖动（进入移动循环，直到松开鼠标），没法自动测。
+// =============================================================================
+imp ui
+
+func inkIn(win, x0, y0, w, h) {          // 数一块区域里有多少非背景像素
+    local bg = ui.pixel(win, 0, 0)
+    local n = 0
+    local j = 0
+    while (j < h) {
+        local i = 0
+        while (i < w) {
+            if (ui.pixel(win, x0 + i, y0 + j) != bg) { n += 1 }
+            i += 1
+        }
+        j += 1
+    }
+    return n
+}
+
+func main() {
+    local w = ui.window("第二批验收", 300, 220)
+
+    // ── 1) 画布：离屏渲染，内容可以直接取色 ──
+    local cv = ui.canvas(60, 40)
+    prln("1) 画布 props:", ui.props(cv).kind, ui.props(cv).w, ui.props(cv).h, "图形数 =", ui.props(cv).shapes)
+    local r1 = ui.rect(cv, 0, 0, 30, 20)          // 建在【画布】上，不是窗口上
+    ui.setAll(r1, {fill = true, fillColor = "#FF0000", stroke = 0})
+    prln("2) 画布内容取色: (10,10) 红 =", ui.pixel(cv, 10, 10) == 0xFF0000,
+         "| 未画到的地方是透明的 =", ui.pixel(cv, 50, 30) == 0x000000)
+
+    // ── 2) 贴到窗口上 ──
+    local img1 = ui.drawImage(w, cv, 100, 100)
+    prln("3) 贴到窗口: 贴图区有红 =", ui.pixel(w, 110, 110) == 0xFF0000,
+         "| 贴图之外是窗口底色 =", ui.pixel(w, 180, 110) != 0xFF0000)
+
+    // ── 3) 画布变了，窗口跟着变（缓存失效链路）──
+    ui.set(r1, "fillColor", "#00FF00")
+    prln("4) 改画布内容后窗口跟着变 =", ui.pixel(w, 110, 110) == 0x00FF00)
+    local r2 = ui.rect(cv, 40, 20, 15, 15)
+    ui.setAll(r2, {fill = true, fillColor = "#0000FF", stroke = 0})
+    prln("5) 往画布加图形也生效 =", ui.pixel(w, 145, 125) == 0x0000FF)
+
+    // ── 4) 画布套画布（贴图来源可以是画布）──
+    local cv2 = ui.canvas(80, 50)
+    local n1 = ui.drawImage(cv2, cv, 5, 5)
+    local n2 = ui.drawImage(w, cv2, 200, 100)
+    prln("6) 画布套画布: 绿色块透到窗口 =", ui.pixel(w, 210, 110) == 0x00FF00,
+         "| 蓝色块也在 =", ui.pixel(w, 250, 130) == 0x0000FF,
+         "| 外层没覆盖的地方不是蓝 =", ui.pixel(w, 275, 145) != 0x0000FF)
+
+    // ── 5) 图片文件 ──
+    prln("7) 打不开的图片 =", ui.image("不存在的图片.png"), "| lastError =", ui.lastError())
+    local ico = ui.image("ui_icon.png")
+    if (ico == null) {
+        prln("!! 图片加载失败:", ui.lastError())
+    } else {
+        local pi = ui.props(ico)
+        prln("8) 图片:", pi.kind, pi.w, "x", pi.h, "| 左上角是红的 =", ui.pixel(ico, 0, 0) == 0xFF0000,
+             "| 右下角是蓝的 =", ui.pixel(ico, 6, 6) == 0x0000FF)
+        local ip = ui.drawImage(w, ico, 10, 150, 32, 32)      // 放大 4 倍贴
+        prln("9) 放大贴图: 左上仍是红 =", ui.pixel(w, 12, 152) == 0xFF0000,
+             "| 放大了 4 倍 =", ui.pixel(w, 38, 178) == 0x0000FF, "| 图形 kind =", ui.get(ip, "kind"))
+    }
+
+    // ── 6) 旋转与缩放 ──
+    local bar = ui.rect(w, 20, 20, 60, 12)
+    ui.setAll(bar, {fill = true, fillColor = "#FFFF00", stroke = 0, z = 5})
+    prln("10) 未旋转: 横条(25,26) =", ui.pixel(w, 25, 26) == 0xFFFF00,
+         "| 竖条位(50,45) =", ui.pixel(w, 50, 45) == 0xFFFF00)
+    ui.set(bar, "angle", 90)
+    prln("11) 转 90°: 竖条(50,45) =", ui.pixel(w, 50, 45) == 0xFFFF00,
+         "| 原横条位空了 =", ui.pixel(w, 25, 26) != 0xFFFF00,
+         "| anchorAuto =", ui.get(bar, "anchorAuto"))
+    ui.setAll(bar, {anchorX = 20, anchorY = 20})
+    prln("12) 换锚点后位置变了 =", ui.pixel(w, 50, 45) != 0xFFFF00, "| anchorAuto =", ui.get(bar, "anchorAuto"))
+    ui.set(bar, "anchorAuto", true)
+    ui.set(bar, "scale", 2)
+    prln("13) 恢复锚点 + scale=2 变长 =", ui.get(bar, "scale") == 2, "| props.scale =", ui.props(bar).scale)
+    prln("14) 旋转后命中仍然准:")
+    local hits = 0
+    ui.setAll(bar, {angle = 90, scale = 1})
+    ui.on(bar, "click", func(e) { hits += 1 })
+    ui.send(w, "click", {x = 50, y = 45})
+    ui.pump()
+    ui.send(w, "click", {x = 25, y = 26})
+    ui.pump()
+    prln("    竖条上命中 =", hits == 1, "| 旧位置不命中 =", hits == 1)
+
+    // ── 7) 文字折行与度量 ──
+    local m1 = ui.measure("abcdef", {size = 16})
+    local m2 = ui.measure("这是一段用来验证折行的中文文本", {size = 16, wrap = 60})
+    prln("15) 不折行: w>0 =", m1.w > 0, "| 行数 =", m1.lines, "| 逐字符宽度个数 =", len(m1.charW))
+    prln("16) 折行: 行数 =", m2.lines, "（应 > 1）| 每行宽度 <= 60 =", m2.lineW[1] <= 60 and m2.lineW[2] <= 60,
+         "| 高度随行数增加 =", m2.h > m1.h, "| 逐字符宽度个数 =", len(m2.charW))
+    prln("17) 换行符也算行: 行数 =", ui.measure("A\nB\nC", {size = 16}).lines)
+    local mt = ui.text(w, 150, 185, "会被折行的中文文本内容")
+    ui.setAll(mt, {size = 14, color = "#FFFFFF", wrap = 70, z = 6})
+    local box = ui.props(mt)
+    prln("18) 折行文字画出来了 =", inkIn(w, 0, 170, 140, 40) > 0,
+         "| 文字框高 =", box.th, "（多行应该更高）")
+
+    // ── 8) 无边框窗口 ──
+    local w2 = ui.window("无边框", 200, 120)
+    local i1 = ui.info(w2)
+    local border1 = i1.winH - i1.h
+    prln("19) 有边框时 整窗-客户区 =", border1)
+    ui.set(w2, "frameless", true)
+    local i2 = ui.info(w2)
+    prln("20) 无边框后 =", i2.winH - i2.h, "| 变小了 =", (i2.winH - i2.h) < border1,
+         "| get frameless =", ui.get(w2, "frameless"))
+    ui.minimize(w2)
+    prln("21) minimize 没报错 =", true, "| lastError =", ui.lastError())
+    ui.close(w2)
+
+    prln("22) 收尾: 窗口数 =", ui.count(), "| lastError =", ui.lastError())
+    ui.close(w)
+}

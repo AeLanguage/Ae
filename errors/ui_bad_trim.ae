@@ -1,0 +1,8 @@
+// trim 写错了：必须明确报错（none/ellipsis）
+imp ui
+
+func main() {
+    local w = ui.window("坏 trim", 160, 80)
+    local t = ui.text(w, 10, 10, "abcdefghij")
+    ui.set(t, "trim", "dots")
+}

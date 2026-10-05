@@ -1,0 +1,35 @@
+── P2-11 字符串索引与内建 ──
+s[1] = h | s[5] = o | s[9] = null (越界→null)
+中文 len = 4 | cn[1] = 中 | cn[2] = 文 | cn[4] = 试
+substr(cn,2,2) = 文测 | ord(cn,1) = 20013
+chr(20013) = 中 | ord(chr(65)) = 65
+substr(s,2,3) = ell | substr(s,4,99) = lo
+find(s,"ll") = 3 | find(s,"z") = null
+upper/lower: ABC abc
+trim: [pad]
+replace: a+b+c
+split: {a, b, c} | len = 3
+join: a | b | c
+repeat: ababab
+── P2-12 format ──
+42 items, 3.14%, ok, ff
+[   42][42   ][00042]
+文字 的中文长度 2
+百分号: 100%
+── P2-14 表原语 ──
+初始: {1, 2, 3} len = 3 count = 3
+append(t,4) = 4 → {1, 2, 3, 4}
+insert(t,1,0) = 5 → {0, 1, 2, 3, 4}
+pop(t) = 4 → {0, 1, 2, 3} count = 4
+delete(t,2) = true → {0, null, 2, 3} len = 1
+delete 不存在的键 = false
+delete(d,"name") = true → {"flag" = true} count = 1
+── P2-15 稀疏整数键 ──
+sp[1000000] = far | count = 1 | len = 0
+sp2[100] = mid | t[1] = 1 | count = 3
+── P2-16 拷贝与深相等 ──
+浅拷贝共享内层: true
+深拷贝不共享内层: false
+equal(a,b) = true | equal(a,c) = true
+环深拷贝后仍自引用: true
+equal(cyc,cyc2) = true

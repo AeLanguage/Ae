@@ -1,0 +1,7 @@
+// 定时器周期 <= 0：必须明确报错（0 毫秒的周期定时器会让 pump 死循环）
+imp ui
+
+func main() {
+    local w = ui.window("坏定时器", 120, 80)
+    ui.timer(0, func(e) { })
+}

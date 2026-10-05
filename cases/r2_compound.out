@@ -1,0 +1,12 @@
+i += 5 -> 15
+i -= 3 -> 12
+i *= 2 -> 24
+i /= 4 -> 6
+f += 0.25 -> 1.75
+f *= 2 -> 3.5
+s += "cd" -> abcd
+semicolon block -> 3
+escapes: [	] [
+] [\] ["]
+concat with escapes: a	b|c
+d

@@ -1,0 +1,44 @@
+// .m 模块里跑一遍新特性：imp 库 / 建路径 / 指令数组 / 返回闭包 / 注册事件回调
+imp ui
+imp geo
+
+func main() {
+    local w = ui.window("模块验收", 220, 160)
+
+    // ① 模块里建路径
+    local star = geo.makeStar(w, 110, 80, 45)
+    ui.setAll(star, {fill = true, fillColor = "#00CC66", stroke = 2, strokeColor = "#004422"})
+    local cmds = ui.get(star, "cmds")
+    prln("1) 模块里建的路径: kind =", ui.get(star, "kind"), "指令数 =", len(cmds))
+    prln("2) 星形内部有颜色 =", ui.pixel(w, 110, 80) == 0x00CC66,
+         "| 星形外是背景 =", ui.pixel(w, 8, 8) != 0x00CC66)
+
+    // ② 纯数据指令数组（模块只做加工，脚本自己建）
+    local rp = ui.path(w, geo.rectCmds(10, 10, 40, 30))
+    ui.setAll(rp, {fill = true, fillColor = "#FF8800", stroke = 0})
+    prln("3) 指令数组建路径: 内部有颜色 =", ui.pixel(w, 20, 20) == 0xFF8800,
+         "| 外部 =", ui.pixel(w, 100, 140) != 0xFF8800)
+
+    // ③ 模块导出的闭包
+    local c1 = geo.counter(10)
+    local c2 = geo.counter(100)
+    prln("4) 模块导出的闭包各自独立:", c1(), c1(), c2(), c1())
+
+    // ④ 模块里注册的事件回调（回调用的是脚本传进去的闭包）
+    local hits = 0
+    geo.bindClick(rp, func(t) { hits += 1 })
+    ui.send(w, "click", {x = 20, y = 20})
+    ui.pump()
+    prln("5) 模块注册的回调收到点击:", hits == 1)
+
+    // ⑤ 命中测试也认路径形状（点在外接矩形里、但在星形外 → 不该命中）
+    local starHits = 0
+    ui.on(star, "click", func(e) { starHits += 1 })
+    ui.send(w, "click", {x = 110, y = 80})           // 星形中心 → 命中
+    ui.pump()
+    ui.send(w, "click", {x = 72, y = 42})            // 外接矩形左上角，星形之外 → 不命中
+    ui.pump()
+    prln("6) 路径命中: 中心命中 =", starHits == 1, "| 外接框内的空白处不命中 =", starHits == 1)
+
+    ui.close(w)
+}
