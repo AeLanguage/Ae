@@ -1,0 +1,156 @@
+// =============================================================================
+//  第四批试玩 —— 脏矩形（局部重画）+ 离屏缓冲（不闪）
+//
+//  跑法（在 Test 目录下）：
+//      ..\Apt\aec.exe ui_dirty_demo.ae
+//      ..\Apt\ae.exe ui_dirty_demo.aeo
+//      ..\Apt\ae.exe ui_dirty_demo.aeo --auto      ← 自动跑 6 秒然后自己关（自检用）
+//
+//  该看什么：
+//    ① 背景是【800 个静态小方块】（画一次就再也不动）——以前的实现每帧都要把这
+//       800 个重新画一遍；现在它们一个都不画，直接从离屏缓冲里贴。
+//    ② 屏幕上动的只有左边几样：转圈的圆环、跑动的进度条、弹跳的球、转动的指针。
+//       右下角那行字会告诉你"上一帧真正画了几个图形、跳过了几个、脏区多大"。
+//    ③ 按 D 打开/关闭【脏区框】：屏幕上会出现一个矩形，就是上一帧重画的区域 ——
+//       你会看到它只包住正在动的那几样东西，其余地方一个像素都没碰。
+//    ④ 按 F 强制整面重画一次（ui.redraw），可以对比"整画 vs 脏画"的耗时。
+//    ⑤ 按 Z 删掉背景的 400 个方块（顺带演示"删东西"也是局部重画）。
+//    ⑥ 左上角帧计数每秒刷新一次：这个演示在 600~2000fps 量级（以前 ~40fps）。
+//    ⑦ Esc 退出（--auto 时 6 秒自己关）
+// =============================================================================
+imp ui
+imp os
+
+func main() {
+    local auto = false
+    local av = os.args()
+    local ai = 1
+    while (ai <= len(av)) {
+        if (av[ai] == "--auto") { auto = true }
+        ai += 1
+    }
+
+    local W = 660
+    local H = 470
+    local w = ui.window("Ae 第四批试玩：脏矩形（按 D 看脏区框，F 整画一次，Esc 退出）", W, H)
+    if (w == null) { prln("[-] 建窗口失败:", ui.lastError()) return }
+    ui.show(w)
+
+    local bg = ui.rect(w, 0, 0, W, H)
+    ui.setAll(bg, {fill = true, fillColor = "#0B1220", stroke = 0, z = -100, aa = false})
+
+    // ── ① 800 个静态方块（画一次，之后每帧都跳过）──
+    local blocks = {}
+    local n = 0
+    while (n < 800) {
+        local bx = 240 + (n % 40) * 10
+        local by = 30 + (n / 40) * 21
+        local r = ui.rect(w, bx, by, 8, 8)
+        ui.setAll(r, {fill = true, stroke = 0, z = -50, aa = false,
+                      fillColor = (n % 3 == 0) ? "#334155" : "#1E293B"})
+        blocks[n + 1] = r
+        n += 1
+    }
+    local label = ui.text(w, 240, 10, "↑ 800 个静态方块：每帧一个都不重画，直接从缓冲里贴")
+    ui.setAll(label, {size = 13, color = "#64748B", z = -49, hits = false})
+
+    // ── ② 会动的东西 ──
+    local spin = ui.group(w)
+    ui.setAll(spin, {x = 60, y = 60})
+    local ring = ui.path(spin)
+    ui.arc(ring, 0, 0, 80, 80, 90, 270)
+    ui.setAll(ring, {fill = false, stroke = 8, strokeColor = "#22D3EE", dash = "16 8", cap = "round"})
+
+    local track = ui.roundRect(w, 40, 190, 160, 16, 8)
+    ui.setAll(track, {fill = true, fillColor = "#1E293B", stroke = 0})
+    local prog = ui.group(w)
+    ui.setAll(prog, {x = 40, y = 190, clipX = 0, clipY = 0, clipW = 160, clipH = 16})
+    local bar = ui.roundRect(prog, 0, 0, 160, 16, 8)
+    ui.setAll(bar, {fill = true, fillColor = "#22C55E", fillColor2 = "#A3E635",
+                    gradient = "horizontal", stroke = 0})
+
+    local ball = ui.circle(w, 60, 260, 16)
+    ui.setAll(ball, {fill = true, fillColor = "#F43F5E", stroke = 0})
+    local clock = ui.rect(w, 150, 300, 60, 6)
+    ui.setAll(clock, {fill = true, fillColor = "#FBBF24", stroke = 0,
+                      anchorX = 150, anchorY = 303})       // 绕左端转
+
+    local counter = ui.text(w, 20, 20, "帧 0")
+    ui.setAll(counter, {size = 15, color = "#E2E8F0", bold = true, z = 5, hits = false})
+    local stat = ui.text(w, 20, 400, "脏矩形：还没画过")
+    ui.setAll(stat, {size = 14, color = "#94A3B8", z = 5, hits = false})
+    local hint = ui.text(w, 20, 424,
+        "D = 显示脏区框    F = 强制整面重画一次    Z = 删掉 400 个方块    Esc = 退出")
+    ui.setAll(hint, {size = 13, color = "#475569", z = 5, hits = false})
+
+    // 脏区框（默认隐藏；按 D 显示）
+    local marker = ui.rect(w, 0, 0, 10, 10)
+    ui.setAll(marker, {fill = false, stroke = 1, strokeColor = "#F87171",
+                       visible = false, z = 90, hits = false, aa = false})
+    ui.set(marker, "dash", "4 3")
+
+    local showDmg = false
+    local frames = 0
+    local fps = 0
+    local lastT = os.millis()
+    local lastFrames = 0
+
+    ui.on(w, "keydown", func(e) {
+        if (e.key == 27) { ui.close(w) }
+        if (e.key == 68) { showDmg = showDmg == false
+                           ui.set(marker, "visible", showDmg) }        // D
+        if (e.key == 70) { ui.redraw(w) }                              // F
+        if (e.key == 90) {                                             // Z
+            local k = 1
+            while (k <= 400) { ui.remove(blocks[k])  k += 1 }
+        }
+    })
+
+    // 每帧：转圆环 + 推进度条 + 弹球 + 转指针
+    ui.tick(func(e) {
+        frames += 1
+        ui.set(spin, "angle", (frames * 5) % 360)
+        local pct = (frames * 1) % 101
+        ui.set(bar, "w", 160 * pct / 100)
+        ui.set(prog, "clipW", 160)
+        local t = frames * 0.06
+        ui.set(ball, "x", 60 + (frames * 3) % 120)
+        ui.set(ball, "y", 260 + (frames % 20) - 10)
+        ui.set(clock, "angle", (frames * 4) % 360)
+    })
+
+    // 每 250ms：刷新统计（顺便量 fps）
+    ui.timer(250, func(e) {
+        local now = os.millis()
+        fps = (frames - lastFrames) * 1000 / (now - lastT + 1)
+        lastT = now
+        lastFrames = frames
+        local d = ui.damage(w)
+        ui.set(counter, "text", "帧 " + str(frames) + "   约 " + str(fps) + " fps")
+        ui.set(stat, "text", "上一帧：重画 " + str(d.drawn) + " 个图形，跳过 " +
+                             str(d.skipped) + " 个，脏区 " + str(d.w) + "x" + str(d.h) +
+                             "（整面 = " + str(d.full) + "）")
+        if (showDmg) {
+            ui.setAll(marker, {x = d.x, y = d.y, w = d.w, h = d.h})
+        }
+    })
+
+    // 3 秒后把提示换成结论
+    ui.timerOnce(3000, func(e) {
+        ui.set(hint, "text", "改一个属性只重画它那一小块：矩形外的像素一个都没碰。" +
+                             "（按 D 看框，F 整画一次对比）")
+        ui.set(hint, "color", "#22D3EE")
+    })
+
+    prln("[+] 800 个静态方块 + 4 个动画（脏矩形）")
+    if (auto) {
+        ui.timerOnce(6000, func(e) {
+            local d = ui.damage(w)
+            prln("[自动] 6 秒跑", frames, "帧（", frames / 6, "fps）；最后一次只重画",
+                 d.drawn, "个图形、跳过", d.skipped, "个，脏区", d.w, "x", d.h)
+            ui.close(w)
+        })
+    }
+    ui.run(w)
+    prln("[+] 退出：共", frames, "帧")
+}

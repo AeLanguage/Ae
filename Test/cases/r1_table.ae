@@ -1,0 +1,30 @@
+// ── 回归 1：表键值对字面量（原本静默出错 / 报错）──
+func main() {
+    local t = {10, 20, 30, name = "Ae", [100] = "hundred"}
+    prln("t =", t)
+    prln("t[name] =", t["name"], " t[100] =", t[100], " t[2] =", t[2])
+    prln("len(t) =", len(t))
+
+    local k = 7
+    local d = {[k * 2] = "dyn", [k] = "seven"}
+    prln("d =", d, " d[7] =", d[7], " d[14] =", d[14])
+
+    local nested = {1, {2, 3}, sub = {x = 1}}
+    nested[2][2] = 99
+    nested["sub"]["x"] = 42
+    prln("nested =", nested)
+
+    // 键是 ident[索引] 形式
+    local idx = {5, 6}
+    local e = {idx[1] = "a", idx[2] = "b"}
+    prln("e =", e, " e[5] =", e[5], " e[6] =", e[6])
+
+    // 字符串值里含空格/纯数字（旧的 token 重放会把它退化成标识符或整数）
+    local s = {"hello world", "123", "a b c"}
+    prln("s =", s)
+    prln("s[1] =", s[1], " s[2] =", s[2], " type(s[2]) =", type(s[2]))
+
+    // 值本身是表达式
+    local v = {1 + 2 * 3, "x" + "y", len("abcd")}
+    prln("v =", v)
+}

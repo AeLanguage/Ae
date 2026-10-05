@@ -1,0 +1,49 @@
+// 内置函数 run 的错误路径与嵌套上限（run.ps1 金例）
+// 子程序就是它自己：靠参数区分"父程序"和"子程序分支"
+imp os
+
+func main() {
+    local a = os.args()
+    if (len(a) >= 1 and a[1] == "quiet") { prln("子程序正常结束"); return }
+    if (len(a) >= 1 and a[1] == "deep")  { run("run_err.aeo", {"deep"}); return }
+
+    // ① 成功跑一个子程序（就是自己，走 quiet 分支）
+    prln("成功调用 =", run("run_err.aeo", {"quiet"}))
+
+    // ② 找不到文件 → E0002
+    try {
+        run("肯定没有这个文件.aeo")
+    } catch (e) {
+        prln("找不到文件:", e.code)
+    }
+
+    // ③ 传的是源码而不是字节码
+    try {
+        run("run_err.ae")
+    } catch (e) {
+        prln("传源码:", e.code)
+    }
+
+    // ④ 第 1 个参数类型不对 → E2001
+    try {
+        run(123)
+    } catch (e) {
+        prln("参数类型:", e.code)
+    }
+
+    // ⑤ 第 2 个参数不是字符串数组 → E2001
+    try {
+        run("run_err.aeo", {"ok", 5})
+    } catch (e) {
+        prln("参数表元素:", e.code)
+    }
+
+    // ⑥ 自我递归 → 被嵌套上限拦住（E2006）
+    try {
+        run("run_err.aeo", {"deep"})
+        prln("嵌套: 不该到这里")
+    } catch (e) {
+        prln("嵌套上限:", e.code)
+    }
+    prln("结束")
+}

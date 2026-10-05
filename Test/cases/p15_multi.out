@@ -1,0 +1,21 @@
+── P1-5 多返回值 ──
+17/5 商余: 3 2
+minmax: 1 9
+交换后 a,b: 2 1
+多赋值取多值: 4 1
+混合右侧: 100 3
+只要第一个: 2
+直接打印调用: 2
+── P1-4 and/or/not ──
+0 or 5 = 5 | 1 or 5 = 1
+null or 7 = 7 | '' or d = d
+1 and 2 = 2 | 0 and 2 = 0
+<A>短路 A: 1
+<C>短路 B: 0
+not: false true true false true true
+优先级 1 or 0 and 0 = 1
+── P1-7 三元 ──
+yes | no
+惰性: t
+嵌套: a
+组合: F true

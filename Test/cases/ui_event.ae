@@ -1,0 +1,163 @@
+// =============================================================================
+//  ui 事件验收：命中测试 / 层级 / 冒泡 / consumed / 悬停进出 / 多 handler /
+//              off / 各类事件字段 / close 可取消 / 回调里改状态
+// -----------------------------------------------------------------------------
+//  判定方式：ui.send(win, kind, {...}) 合成事件 —— 它走的是和真实窗口消息
+//  【完全一样】的派发路径（入队 → pump 里派发），所以这里测到的就是真实行为。
+// =============================================================================
+imp ui
+
+func main() {
+    local w = ui.window("事件验收", 200, 150)
+
+    local bg = ui.rect(w, 0, 0, 200, 150)
+    ui.setAll(bg, {fill = true, fillColor = "#111111", stroke = 0, z = -10})
+    local box = ui.rect(w, 20, 20, 60, 60)
+    ui.setAll(box, {fill = true, fillColor = "#FF0000", stroke = 0, z = 0})
+    local box2 = ui.rect(w, 20, 20, 60, 60)
+    ui.setAll(box2, {fill = true, fillColor = "#0000FF", stroke = 0, z = 1})
+
+    // 回调里改脚本状态：这就是闭包 + 事件的组合用法
+    local log = {}
+    local clicks = 0
+    func note(s) { log[len(log) + 1] = s }
+
+    // ── 1) 图形命中 + 层级（谁在上面谁先收到）──
+    ui.on(box,  "click", func(e) { note("box x=" + str(e.x) + " y=" + str(e.y) + " target是自己=" + str(e.target == box) + " win=" + str(e.win == w)) })
+    ui.on(box2, "click", func(e) { note("box2(上层)") })
+    ui.send(w, "click", {x = 30, y = 30, button = 1})
+    ui.pump()
+    prln("1) 最上层命中:", log[1])
+
+    ui.set(box2, "z", -1)                       // 层级实时改变 → 目标跟着变
+    ui.send(w, "click", {x = 30, y = 30})
+    ui.pump()
+    prln("2) 改 z 之后:", log[2])
+
+    ui.set(box2, "visible", false)               // 隐藏的图形不参与命中
+    ui.send(w, "click", {x = 30, y = 30})
+    ui.pump()
+    prln("3) 隐藏上层后:", log[3])
+    ui.set(box2, "visible", true)
+    ui.set(box2, "z", 1)
+
+    // ── 2) 冒泡到窗口 + 命中图形后仍然冒泡 ──
+    ui.on(w, "click", func(e) { note("win(冒泡) target是窗口=" + str(e.target == w)) })
+    ui.send(w, "click", {x = 100, y = 100})      // 空白处 → 只有窗口
+    ui.pump()
+    prln("4) 空白处:", log[4])
+    ui.send(w, "click", {x = 30, y = 30})        // 有图形 → 图形先，然后冒泡
+    ui.pump()
+    prln("5) 图形+冒泡顺序:", log[5], "|", log[6])
+
+    // ── 3) handler 返回 true = 吃掉事件，不再冒泡 ──
+    local eaten = 0
+    ui.off(box2, "click")
+    ui.on(box2, "click", func(e) { eaten += 1  return true })
+    ui.send(w, "click", {x = 30, y = 30})
+    ui.pump()
+    prln("6) 被吃掉:", eaten == 1, "| 窗口这次没收到 =", len(log) == 6)
+
+    // ── 4) 同一事件多个 handler，按注册顺序都调用 ──
+    local order = {}
+    ui.off(box2, "click")
+    ui.on(box2, "click", func(e) { order[len(order) + 1] = "A" })
+    ui.on(box2, "click", func(e) { order[len(order) + 1] = "B" })
+    ui.on(box2, "click", func(e) { order[len(order) + 1] = "C" })
+    prln("7) handlers 计数:", ui.handlers(box2).click)
+    ui.send(w, "click", {x = 30, y = 30})
+    ui.pump()
+    prln("8) 调用顺序:", str(order[1]) + str(order[2]) + str(order[3]))
+
+    local removed = ui.off(box2, "click")
+    prln("9) off 移除个数:", removed, "| 现在:", ui.handlers(box2).click == null)
+
+    // ── 5) 悬停进出（mousemove 触发）──
+    local hover = {}
+    ui.on(box2, "mouseenter", func(e) { hover[len(hover) + 1] = "enter" })
+    ui.on(box2, "mouseleave", func(e) { hover[len(hover) + 1] = "leave" })
+    ui.send(w, "mousemove", {x = 100, y = 100})   // 空白
+    ui.send(w, "mousemove", {x = 30, y = 30})     // 进入 box2
+    ui.send(w, "mousemove", {x = 35, y = 35})     // 还在 box2 里 → 不重复 enter
+    ui.send(w, "mousemove", {x = 100, y = 10})    // 离开
+    ui.pump()
+    prln("10) 悬停序列:", hover[1], hover[2], "| 共", len(hover), "条（第三段不重复 enter）")
+
+    // ── 6) 各类事件的字段 ──
+    local seen = {}
+    ui.on(w, "wheel",  func(e) { seen[len(seen) + 1] = "wheel delta=" + str(e.wheel) + " @" + str(e.x) + "," + str(e.y) })
+    ui.on(w, "keydown", func(e) { seen[len(seen) + 1] = "keydown key=" + str(e.key) })
+    ui.on(w, "char",   func(e) { seen[len(seen) + 1] = "char key=" + str(e.key) })
+    ui.on(w, "resize", func(e) { seen[len(seen) + 1] = "resize " + str(e.w) + "x" + str(e.h) })
+    ui.send(w, "wheel",  {x = 10, y = 12, wheel = 1})
+    ui.send(w, "keydown", {key = 65})
+    ui.send(w, "char",    {key = 97})
+    ui.send(w, "resize",  {w = 320, h = 200})
+    ui.pump()
+    local k = 1
+    while (k <= len(seen)) { prln("11.", k, ")", seen[k])  k += 1 }
+
+    // ── 7) close 可以被吃掉（关窗前询问）──
+    local asked = 0
+    ui.on(w, "close", func(e) { asked += 1  return true })    // 返回 true → 取消关闭
+    ui.send(w, "close", {})
+    ui.pump()
+    prln("12) 询问了", asked, "次 | 窗口还活着 =", ui.count() == 1)
+
+    ui.off(w, "close")                                        // 去掉拦截 → 这次真关
+    ui.send(w, "close", {})
+    ui.pump()
+    prln("13) 不拦截后窗口数 =", ui.count())
+
+    // ── 8) 回调里改图形属性（事件驱动重绘）──
+    local w2 = ui.window("回调改属性", 120, 80)
+    local dot = ui.circle(w2, 60, 40, 20)
+    ui.setAll(dot, {fill = true, fillColor = "#00FF00", stroke = 0})
+    local n = 0
+    ui.on(dot, "click", func(e) {
+        n += 1
+        ui.set(dot, "r", 20 + n * 5)
+        ui.set(dot, "fillColor", "#FF00FF")
+    })
+    ui.send(w2, "click", {x = 60, y = 40})
+    ui.pump()
+    prln("14) 回调改属性: n =", n, "| 半径 =", ui.get(dot, "r"), "| 颜色 =", ui.get(dot, "fillColor"),
+         "| 像素 =", ui.pixel(w2, 60, 40) == 0xFF00FF)
+    ui.close(w2)
+
+    // ── 9) 穿透：上层装饰（比如按钮上的文字标签）不能吃掉下层按钮的点击 ──
+    //   规则：事件沿【命中链】从上往下走，谁注册了这种事件谁接住，都没注册就冒泡到窗口。
+    //   曾经的问题：标签没注册 click 就把事件挡住了 → "点按钮没反应"。
+    local w3 = ui.window("穿透验收", 240, 120)
+    local hits = 0
+    local lastTarget = 0
+    local under = ui.rect(w3, 20, 20, 200, 60)
+    ui.setAll(under, {fill = true, fillColor = "#224466", stroke = 0, z = 0})
+    local over = ui.text(w3, 120, 50, "按钮上的标签")
+    ui.setAll(over, {size = 18, color = "#FFFFFF", align = "center", valign = "middle", z = 2})
+    ui.on(under, "click", func(e) { hits += 1  lastTarget = e.target })
+    ui.send(w3, "click", {x = 120, y = 50})          // 正打在标签上
+    ui.pump()
+    prln("16) 点在标签上（标签无 handler）→ 穿透到下层:", hits == 1, "| 事件目标是下层按钮 =", lastTarget == under)
+
+    // ── 10) hits = false：显式声明"鼠标穿透"（即使它有 handler 也不接）──
+    local over2 = ui.rect(w3, 20, 20, 200, 60)
+    ui.setAll(over2, {fill = true, fillColor = "#000000", stroke = 0, z = 3, hits = false})
+    local hits2 = 0
+    ui.on(over2, "click", func(e) { hits2 += 1 })
+    ui.send(w3, "click", {x = 120, y = 50})
+    ui.pump()
+    prln("17) hits=false 的对象不接事件:", hits2 == 0, "| 下层照收:", hits == 2)
+
+    // ── 11) 悬停目标也是"链上第一个注册了 enter/leave 的对象" ──
+    local over3 = ui.text(w3, 120, 50, "又一层标签")
+    ui.setAll(over3, {size = 14, color = "#FFFF00", align = "center", valign = "middle", z = 4})
+    local entered = 0
+    ui.on(under, "mouseenter", func(e) { entered += 1 })
+    ui.send(w3, "mousemove", {x = 120, y = 50})     // 停在两层标签上
+    ui.pump()
+    prln("18) 停在标签上也算进入按钮:", entered == 1, "| 标签仍然可以设 hits=false:", ui.set(over3, "hits", false) == over3)
+    ui.close(w3)
+
+    prln("15) 最后: count =", ui.count(), "| lastError =", ui.lastError())
+}

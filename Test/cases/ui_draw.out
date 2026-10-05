@@ -1,0 +1,47 @@
+背景色 = 16777215
+默认 fill = false | 默认 stroke = 1
+空心矩形：内部是空的 true | 边上默认已有 1px 描边 true
+实心红：内部 true | 外部 true
+get 颜色 = #FF0000
+整数设色后 = #0000FF | 像素 true
+#RGB 简写 = #00FF00 | 像素 true
+4px 描边：上边(40,10) true | 内部仍是空的 true
+stroke=0 时完全不画： true
+remove 后： true
+实心圆：圆心 true | 外接框角上 true
+改空心（实时变换）：圆心 true
+椭圆：中央 true | 上下超出（也避开圆） true
+实心三角：内部 true | 斜边外 true
+改折线（不闭合）：内部 true
+points 读写 = 长度 6 第 3 个 80
+统一圆角 15：左上角(22,22) true | 中心 true
+只圆左上：左上 true | 右上 true
+只圆右上：左上 true | 右上 true
+只圆右下：右下 true
+只圆左下：左下 true
+同位置两矩形：上层是蓝 true
+把蓝的 z 改到下面： true
+隐藏蓝的： true
+点默认实心 r=2： true
+点变 r=6 洋红： true
+20px 粗线：线上 true | 线外 true
+线宽改 0 后不画： true
+抗锯齿开/关在边缘有 1 个像素不同（应 > 0）
+props.kind = rect | x = 5 | fill = false | win = true | z = 0
+get 返回整数不是浮点 = true
+浮点也能设：x = 7.5 | y = 8.25
+shapes 列表长度 = 4 | count = 1
+clear 后图形数 = 0
+clear 后用旧 id：
+  [-] ui.get：id 非法（12）—— 可能已经关闭/删除，或从来不存在
+窗口属性: set 标题 / get 标题 = true 新标题
+窗口 props.kind = window | visible = false
+[-] ui.set 不认识属性 'nope'；可用：x y w h r rx ry rtl rtr rbr rbl x2 y2 stroke z strokeColor fillColor fill closed visible aa fillColor2 hits cursor angle scale anchorX anchorY anchorAuto clipX clipY clipW clipH gradient gradientAngle dash cap join points cmds kind win（后两个只读，kind 是图形种类名）
+[-] ui.get 不认识属性 'nope'；可用：x y w h r rx ry rtl rtr rbr rbl x2 y2 stroke z strokeColor fillColor fill closed visible aa fillColor2 hits cursor angle scale anchorX anchorY anchorAuto clipX clipY clipW clipH gradient gradientAngle dash cap join points cmds kind win（后两个只读，kind 是图形种类名）
+[-] ui.set 的第 3 个参数颜色写法不对：red（要 "#RRGGBB" 或 "#AARRGGBB"）
+[-] ui.circle：需要窗口、画布或组 id（当前是 图形）
+[-] ui.poly 的点数组要写成 {x1,y1,x2,y2,...}：至少 2 个点、个数为偶数，当前 3 个数字
+[-] ui.set 不认识窗口属性 'stroke'；窗口可用：title x y w h visible resizable maximizable frameless cursor
+窗口外取色 = null
+lastError = null
+关窗后 count = 0

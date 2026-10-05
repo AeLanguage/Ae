@@ -1,0 +1,58 @@
+// P2 验收：字符串 / 表 / 格式化内建
+func main() {
+    prln("── P2-11 字符串索引与内建 ──")
+    local s = "hello"
+    prln("s[1] =", s[1], "| s[5] =", s[5], "| s[9] =", s[9], "(越界→null)")
+    local cn = "中文测试"
+    prln("中文 len =", len(cn), "| cn[1] =", cn[1], "| cn[2] =", cn[2], "| cn[4] =", cn[4])
+    prln("substr(cn,2,2) =", substr(cn, 2, 2), "| ord(cn,1) =", ord(cn, 1))
+    prln("chr(20013) =", chr(20013), "| ord(chr(65)) =", ord(chr(65)))
+    prln("substr(s,2,3) =", substr(s, 2, 3), "| substr(s,4,99) =", substr(s, 4, 99))
+    prln("find(s,\"ll\") =", find(s, "ll"), "| find(s,\"z\") =", find(s, "z"))
+    prln("upper/lower:", upper("aBc"), lower("aBc"))
+    prln("trim:", "[" + trim("  pad  ") + "]")
+    prln("replace:", replace("a-b-c", "-", "+"))
+    local parts = split("a,b,c", ",")
+    prln("split:", parts, "| len =", len(parts))
+    prln("join:", join(parts, " | "))
+    prln("repeat:", repeat("ab", 3))
+
+    prln("── P2-12 format ──")
+    prln(format("%d items, %.2f%%, %s, %x", 42, 3.14159, "ok", 255))
+    prln(format("[%5d][%-5d][%05d]", 42, 42, 42))
+    prln(format("%s 的中文长度 %d", "文字", len("文字")))
+    prln(format("百分号: 100%%"))
+
+    prln("── P2-14 表原语 ──")
+    local t = {1, 2, 3}
+    prln("初始:", t, "len =", len(t), "count =", count(t))
+    prln("append(t,4) =", append(t, 4), "→", t)
+    prln("insert(t,1,0) =", insert(t, 1, 0), "→", t)
+    prln("pop(t) =", pop(t), "→", t, "count =", count(t))
+    prln("delete(t,2) =", delete(t, 2), "→", t, "len =", len(t))
+    prln("delete 不存在的键 =", delete(t, 99))
+    local d = {name = "Ae", flag = true}
+    prln("delete(d,\"name\") =", delete(d, "name"), "→", d, "count =", count(d))
+
+    prln("── P2-15 稀疏整数键 ──")
+    local sp = {}
+    sp[1000000] = "far"
+    prln("sp[1000000] =", sp[1000000], "| count =", count(sp), "| len =", len(sp))
+    local sp2 = {1, 2}
+    sp2[100] = "mid"
+    prln("sp2[100] =", sp2[100], "| t[1] =", sp2[1], "| count =", count(sp2))
+
+    prln("── P2-16 拷贝与深相等 ──")
+    local inner = {1, 2}
+    local a = {inner, x = 1}
+    local b = copy(a)
+    prln("浅拷贝共享内层:", a[1] == b[1])
+    local c = deepcopy(a)
+    prln("深拷贝不共享内层:", a[1] == c[1])
+    prln("equal(a,b) =", equal(a, b), "| equal(a,c) =", equal(a, c))
+    local cyc = {}
+    cyc[1] = cyc
+    local cyc2 = deepcopy(cyc)
+    prln("环深拷贝后仍自引用:", cyc2[1] == cyc2)
+    prln("equal(cyc,cyc2) =", equal(cyc, cyc2))
+}

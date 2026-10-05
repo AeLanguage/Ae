@@ -1,0 +1,5 @@
+func main()
+{
+    local t = {a = 1}
+    prln(t.a.b)
+}

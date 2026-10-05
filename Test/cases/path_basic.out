@@ -1,0 +1,43 @@
+═══ 纯字符串运算（与平台无关：规范分隔符一律 /）═══
+── 查询 ──
+sep 合法 = true
+isAbsolute: true true false false
+── 拆解 ──
+dirname  = /home/user/docs
+basename = a.tar.gz
+stem     = a.tar
+ext      = .gz
+边界: dirname("a.txt") = []  basename("a/b/") = b
+隐藏文件: stem(".gitignore") = .gitignore  ext = []
+盘符: dirname("C:/a") = C:/  dirname("/a") = /
+split = {home, user, ., docs}
+── 组装 ──
+join(3段)     = a/b/c
+join 带 ..    = a/c
+join 遇绝对    = /x/y
+join 反斜杠    = a/b/c
+join 忽略空串  = a/b
+── 规范化 ──
+normalize = a/b/d
+越过根被吃掉 = /a
+相对路径保留 .. = ../a
+空串 → . = .
+replaceExt(.md) = dir/a.md
+replaceExt(空)  = dir/a
+toNative 长度 = 5
+── abs ──
+abs 结果绝对 = true
+abs 幂等 = true
+abs 已绝对保持 = true
+abs 规范化相对 = true
+
+═══ path + io：递归目录遍历 ═══
+a.txt
+sub/
+  b.txt
+  deep/
+    c.md
+
+── 顺手演示：按扩展名筛选 ──
+文件总数 = 3 | .txt = 2 | .md = 1
+清理完成，目录已消失 = true

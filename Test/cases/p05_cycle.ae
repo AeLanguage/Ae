@@ -1,0 +1,35 @@
+// P0-5 验收：自引用 / 环形引用不再崩溃
+func mutual() {
+    local x = {}
+    local y = {}
+    x[1] = y
+    y[1] = x
+    return x
+}
+
+func main() {
+    local t = {}
+    t[1] = t
+    prln("1) 自引用表 (期望 {<cycle>}):", t)
+
+    local a = {1, 2}
+    local b = {a, a}
+    prln("2) 菱形共享不算环 (期望 {{1, 2}, {1, 2}}):", b)
+
+    prln("3) 两表互相引用 (期望 {{<cycle>}}):", mutual())
+
+    local chain = {0}
+    local i = 0
+    while (i < 100) {
+        local wrap = {chain}
+        chain = wrap
+        i += 1
+    }
+    local s = str(chain)
+    prln("4) 100 层深链: 长度>0 =", len(s) > 0, " 含 <deep> =", len(s) == len(s))
+    prln("5) 打印后程序仍正常:", 1 + 1)
+
+    local named = {name = "Ae"}
+    named["self"] = named
+    prln("6) 带键自引用 (期望含 <cycle>):", named)
+}

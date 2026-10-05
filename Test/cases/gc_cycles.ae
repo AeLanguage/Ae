@@ -1,0 +1,36 @@
+// GC 回归：表环、递归闭包环、表与闭包混合环都必须能在循环中被回收。
+func makeTableCycle() {
+    local a = {}
+    local b = {}
+    a[1] = b
+    b[1] = a
+}
+
+func makeClosureCycle() {
+    local fact = func fact(n) {
+        if (n <= 1) { return 1 }
+        return n * fact(n - 1)
+    }
+    assert(fact(6) == 720)
+}
+
+func makeMixedCycle() {
+    local box = {}
+    local callback = func callback(n) {
+        if (n == 0) { return len(box) }
+        return callback(n - 1)
+    }
+    box["callback"] = callback
+    assert(callback(3) == 0)
+}
+
+func main() {
+    local i = 0
+    while (i < 4000) {
+        makeTableCycle()
+        makeClosureCycle()
+        makeMixedCycle()
+        i += 1
+    }
+    prln("GC cycles: ok")
+}

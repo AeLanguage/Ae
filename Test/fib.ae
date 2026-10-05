@@ -1,0 +1,123 @@
+// =============================================================================
+//  fib.ae —— Ae 语言性能基准
+// -----------------------------------------------------------------------------
+//  用法：
+//      cd Test
+//      ..\Apt\aec.exe fib.ae            # 编译出 fib.aeo
+//      ..\Apt\ae.exe fib.aeo            # 默认跑 fib(40)
+//      ..\Apt\ae.exe fib.aeo 30         # 也可以指定 n（越小越快）
+//
+//  测三样东西：
+//      1) 朴素递归 fib(n)      —— 跨语言最常用的对比基准（考函数调用开销）
+//      2) 紧凑整数循环          —— 考虚拟机指令派发速度（不含调用开销）
+//      3) 调用次数与每秒调用数  —— 便于和 C/Python 等语言横向对比
+//
+//  fib(40) 需要约 3.3 亿次函数调用，脚本会先跑 fib(30) 热身并据此
+//  预估总耗时，所以不会出现"盯着黑屏不知道要等多久"的情况。
+// =============================================================================
+imp os
+
+func fib(n) {
+    if (n < 2) { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+// 迭代版：只用来算调用次数和做结果校验，不计入基准
+func fibIter(n) {
+    local a = 0
+    local b = 1
+    local i = 0
+    while (i < n) {
+        local t = a + b
+        a = b
+        b = t
+        i += 1
+    }
+    return a
+}
+
+// φ^k（k 可为负），用于按 φ^n 增长规律外推耗时
+func phiPow(k) {
+    local f = 1.0
+    local i = 0
+    if (k >= 0) {
+        while (i < k) {
+            f *= 1.618033988749895
+            i += 1
+        }
+    } else {
+        while (i < 0 - k) {
+            f /= 1.618033988749895
+            i += 1
+        }
+    }
+    return f
+}
+
+func main() {
+    local n = 40
+    local args = os.args()
+    if (len(args) >= 1) {
+        n = int(args[1])
+        if (n < 1 or n > 45) {
+            prln("n 请取 1..45（45 会跑很久），收到:", n)
+            return
+        }
+    }
+
+    prln("══════ Ae 性能基准 ══════")
+    prln("fib 目标 n =", n, "| 平台 =", os.platform(), "| CPU 核数 =", os.cpuCount())
+    prln("")
+
+    // ── 1) 热身 + 校准 ──
+    local warmN = 30
+    if (n < warmN) { warmN = n }
+    local tw0 = os.millis()
+    local warm = fib(warmN)
+    local tw = os.millis() - tw0
+    if (tw <= 0) { tw = 1 }                       // 太快时按 1ms 记，避免除零
+    prln("[热身] fib(" + str(warmN) + ") =", warm, "  用时", tw, "ms")
+
+    local est = 0
+    if (n > warmN) {
+        est = int(float(tw) * phiPow(n - warmN))
+        prln("[预估] fib(" + str(n) + ") 约需", est, "ms（按 fib 的 φ^n 增长规律外推）")
+    } else {
+        prln("[预估] n 不超过热身规模，直接用上面的实测值")
+    }
+    prln("")
+
+    // ── 2) 正式基准：朴素递归 ──
+    local t0 = os.millis()
+    local r = fib(n)
+    local dt = os.millis() - t0
+
+    // ── 3) 统计：调用次数（闭式 calls = 2*F(n+1) - 1）──
+    local calls = 2 * fibIter(n + 1) - 1
+    local perMs = float(calls) / float(dt > 0 ? dt : 1)
+
+    prln("【递归 fib】")
+    prln("  fib(" + str(n) + ") =", r, "  （结果校验:", r == fibIter(n), "）")
+    prln("  用时         =", dt, "ms")
+    prln("  函数调用次数  =", calls)
+    prln("  每秒调用数    =", perMs * 1000.0, " 次/秒")
+    prln("  单次调用耗时  =", 1000000.0 / (perMs * 1000.0), " 微秒")
+    prln("")
+
+    // ── 4) 紧凑循环：考指令派发速度（不含函数调用开销）──
+    local iters = 5000000
+    local t1 = os.millis()
+    local s = 0
+    local i = 0
+    while (i < iters) {
+        s += i * 3 - 1
+        i += 1
+    }
+    local dt1 = os.millis() - t1
+    prln("【紧凑整数循环】")
+    prln("  迭代次数 =", iters, "| 校验和 =", s)
+    prln("  用时     =", dt1, "ms")
+    if (dt1 > 0) { prln("  每秒迭代 =", float(iters) / float(dt1) * 1000.0, " 次/秒") }
+    prln("")
+    prln("══════ 结束 ══════")
+}

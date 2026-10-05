@@ -1,0 +1,22 @@
+// check_run.ps1 用的子程序：被 run() 调起来跑（不是给人直接跑的）
+// 行为由参数决定：nest → 再调 child2；fail → 故意出错；exit → exit(3)；其它 → 正常结束
+imp os
+
+func main() {
+    local a = os.args()
+    g = 999                              // 子程序自己的全局：父程序的同名全局不该被碰到
+    prln("[child] 开始 参数个数=", len(a), " 我的全局 g=", g)
+    if (len(a) >= 1 and a[1] == "nest") {
+        prln("[child] 再调下一层")
+        prln("[child] child2 返回 =", run("child2.aeo"))
+    }
+    if (len(a) >= 1 and a[1] == "fail") {
+        local bad = 1 / 0                 // 未捕获 → 由父程序那边变成可捕获的错误
+        prln(bad)
+    }
+    if (len(a) >= 1 and a[1] == "exit") {
+        prln("[child] 准备 exit(3)")
+        exit(3)
+    }
+    prln("[child] 正常结束")
+}

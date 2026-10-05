@@ -1,0 +1,23 @@
+1) 画布 props: canvas 60 40 图形数 = 0
+2) 画布内容取色: (10,10) 红 = true | 未画到的地方是透明的 = true
+3) 贴到窗口: 贴图区有红 = true | 贴图之外是窗口底色 = true
+4) 改画布内容后窗口跟着变 = true
+5) 往画布加图形也生效 = true
+6) 画布套画布: 绿色块透到窗口 = true | 蓝色块也在 = true | 外层没覆盖的地方不是蓝 = true
+7) 打不开的图片 = null | lastError = ui.image：打不开图片 '不存在的图片.png'（路径不对，或格式不支持）
+8) 图片: image 8 x 8 | 左上角是红的 = true | 右下角是蓝的 = true
+9) 放大贴图: 左上仍是红 = true | 放大了 4 倍 = true | 图形 kind = image
+10) 未旋转: 横条(25,26) = true | 竖条位(50,45) = false
+11) 转 90°: 竖条(50,45) = true | 原横条位空了 = true | anchorAuto = true
+12) 换锚点后位置变了 = true | anchorAuto = false
+13) 恢复锚点 + scale=2 变长 = true | props.scale = 2
+14) 旋转后命中仍然准:
+    竖条上命中 = true | 旧位置不命中 = true
+15) 不折行: w>0 = true | 行数 = 1 | 逐字符宽度个数 = 6
+16) 折行: 行数 = 5 （应 > 1）| 每行宽度 <= 60 = true | 高度随行数增加 = true | 逐字符宽度个数 = 15
+17) 换行符也算行: 行数 = 3
+18) 折行文字画出来了 = true | 文字框高 = 53 （多行应该更高）
+19) 有边框时 整窗-客户区 = 47
+20) 无边框后 = 16 | 变小了 = true | get frameless = true
+21) minimize 没报错 = true | lastError = null
+22) 收尾: 窗口数 = 1 | lastError = null

@@ -1,0 +1,48 @@
+// args 库：命令行解析（用 parseArgv 指定 argv，结果可复现）
+imp args
+
+func spec() {
+    return {
+        {name = "verbose", short = "v", kind = "flag",   help = "详细输出"},
+        {name = "out",     short = "o", kind = "option", help = "输出文件", default = "out.txt"},
+        {name = "input",   short = "i", kind = "option", help = "输入目录", multiple = true},
+        {name = "level",   short = "l", kind = "count",  help = "详细级别"},
+        {name = "must",                                  kind = "option", required = true, help = "必填项"},
+    }
+}
+
+func line(tag, a) {
+    if (a.error != null) {
+        prln(tag, "=> 错误:", a.error)
+        return
+    }
+    prln(tag, "=> v=", a.verbose, "out=", a.out, "in=", a.input, "lv=", a.level, "rest=", a.rest)
+}
+
+func main() {
+    local s = spec()
+
+    line("默认",     args.parseArgv(s, {"--must=x"}))
+    line("长等号",   args.parseArgv(s, {"--out=a.json", "--must=x"}))
+    line("长分开",   args.parseArgv(s, {"--out", "b.json", "--must=x"}))
+    line("短粘连",   args.parseArgv(s, {"-oc.json", "--must=x"}))
+    line("连写标志", args.parseArgv(s, {"-vo", "d.json", "--must=x"}))
+    line("计数",     args.parseArgv(s, {"-lll", "--must=x"}))
+    line("可重复",   args.parseArgv(s, {"-i", "src", "-i", "lib", "--must=x"}))
+    line("位置参数", args.parseArgv(s, {"a.txt", "b.txt", "--must=x"}))
+    line("负数位置", args.parseArgv(s, {"-5", "--must=x"}))
+    line("分隔符",   args.parseArgv(s, {"--must=x", "--", "-v", "--out=y"}))
+
+    line("未知选项", args.parseArgv(s, {"--nope"}))
+    line("选项缺值", args.parseArgv(s, {"--out"}))
+    line("flag带值", args.parseArgv(s, {"--verbose=1"}))
+    line("缺必填",   args.parseArgv(s, {"-v"}))
+
+    local h = args.parseArgv(s, {"-h"})
+    prln("help =", h.help, "error =", h.error)
+
+    prln("intOr =", args.intOr("42", 0), args.intOr("xx", -1))
+    prln("floatOr =", args.floatOr(null, 2.5), args.floatOr("1.25", 0.0))
+
+    pr(args.usageNamed(s, "demo"))
+}

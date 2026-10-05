@@ -1,0 +1,4 @@
+func main() {
+  local s = "abc"
+  prln(s["x"])
+}

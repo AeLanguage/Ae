@@ -1,0 +1,16 @@
+创建成功 = true | lastError = null
+客户区 = 400 x 300 | visible = false | resizable = true | maximizable = true
+show 后 visible = true | pump = 1
+titleOf = 改名：中文标题
+size(640,480) 后 = 640 x 480
+pos(100,120) 后 = 100 , 120
+两个标志关掉 = false false
+两个标志打开 = true true
+count = 1
+close 后 count = 0 | pump = 0
+window(0,0) = null | ui.window：窗口大小必须在 1..32767 之间（客户区像素），得到 0×0
+[-] ui.title：窗口 id 非法（1）—— 可能已经关闭，或从来不存在
+[-] ui.visible：窗口 id 非法（999）—— 可能已经关闭，或从来不存在
+[-] ui.window 的第 2 个参数需要 int
+[-] ui.resizable 的第 2 个参数需要 bool（true/false）
+run(0) 无窗口 = true

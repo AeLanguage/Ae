@@ -1,0 +1,22 @@
+func main() {
+    if (0)  { prln("zero is TRUE") }  else { prln("zero is FALSE") }
+    if ("") { prln("empty str TRUE") } else { prln("empty str FALSE") }
+    if ({}) { prln("empty table TRUE") } else { prln("empty table FALSE") }
+    if ({1}) { prln("nonempty table TRUE") } else { prln("nonempty table FALSE") }
+    if (null) { prln("null TRUE") } else { prln("null FALSE") }
+    local e = {}
+    prln("empty table literal prints as:", e)
+    g = 7
+    prln("assigned global (g=7):", g)
+    a = 1
+    b = 2
+    prln("globals a,b:", a, b)
+    local i = 0
+    while (i < 10) {
+        i = i + 1
+        if (i == 2) { continue }
+        if (i == 5) { break }
+        pr("i=", i, " ")
+    }
+    prln("")
+}

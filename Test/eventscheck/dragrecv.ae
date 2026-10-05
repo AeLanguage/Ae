@@ -1,0 +1,57 @@
+// =============================================================================
+//  拖动窗口时的动画检查 —— 配合 Test/check_drag.ps1
+// -----------------------------------------------------------------------------
+//  为什么要单独测：拖标题栏（或拖边缘改大小）时，Windows 会在 DefWindowProc 里
+//  跑一个【自己的模态消息循环】，直到松手才回来 —— 这期间脚本的 pump/run 循环
+//  根本没在跑，定时器就没人派发，动画会"冻住"。库里的办法是在进模态循环时挂一个
+//  SetTimer，用 WM_TIMER 把自己叫醒继续派发定时器。
+//
+//  这里不猜行为，直接量【帧间隔】：动画每帧记一次 os.millis()，把最大间隔报出来。
+//    · 修好了：拖动期间照样 5ms 一次 WM_TIMER → 最大间隔也就几十毫秒
+//    · 没修：整段拖动期间一帧都不动 → 最大间隔 ≈ 拖动时长（一秒以上）
+// =============================================================================
+imp ui
+imp os
+
+func main() {
+    local w = ui.window("DRAGRECV", 340, 220)
+    if (w == null) { prln("[-] 建窗口失败:", ui.lastError()) return }
+    ui.show(w)
+
+    local bg = ui.rect(w, 0, 0, 340, 220)
+    ui.setAll(bg, {fill = true, fillColor = "#0F172A", stroke = 0, z = -10, aa = false})
+    local ball = ui.circle(w, 40, 110, 16)
+    ui.setAll(ball, {fill = true, fillColor = "#22C55E", stroke = 0})
+    local spin = ui.rect(w, 170, 108, 120, 6)
+    ui.setAll(spin, {fill = true, fillColor = "#38BDF8", stroke = 0,
+                     anchorX = 170, anchorY = 111})
+    local txt = ui.text(w, 170, 40, "拖动本窗口标题栏试试")
+    ui.setAll(txt, {size = 14, color = "#94A3B8", align = "center", hits = false})
+
+    local frames = 0
+    local last = os.millis()
+    local t0 = last
+    local maxGap = 0
+    local gapAt = 0
+    ui.tick(func(e) {
+        frames += 1
+        ui.set(ball, "x", 40 + (frames % 160))
+        ui.set(spin, "angle", (frames * 6) % 360)
+        local now = os.millis()
+        local gap = now - last
+        if (gap > maxGap) { maxGap = gap; gapAt = frames }
+        last = now
+    })
+
+    // 12 秒后自己收尾（PowerShell 那边在这之前拖一下窗口）
+    ui.timerOnce(12000, func(e) {
+        local total = os.millis() - t0
+        prln("[结果] 总帧数 =", frames, "| 总时长 =", total, "ms")
+        prln("[结果] 最大帧间隔 =", maxGap, "ms（出现在第", gapAt, "帧）")
+        ui.close(w)
+    })
+
+    prln("[就绪] 开始动画，等 PowerShell 拖动窗口")
+    ui.run(w)
+    prln("[退出] 结束")
+}

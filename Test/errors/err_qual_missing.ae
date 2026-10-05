@@ -1,0 +1,2 @@
+imp io
+func main() { prln(io.noSuchFn()) }

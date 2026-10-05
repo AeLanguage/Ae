@@ -1,0 +1,8 @@
+// 线帽写错了：必须明确报错（flat/round/square）
+imp ui
+
+func main() {
+    local w = ui.window("坏线帽", 120, 80)
+    local l = ui.line(w, 10, 10, 60, 10)
+    ui.set(l, "cap", "pointy")
+}

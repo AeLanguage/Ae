@@ -1,0 +1,32 @@
+── 1) 捕获除零，看错误表字段 ──
+code = E2002 | kind = divzero
+msg  = 整数除以零
+位置 = 第 5 行 第 18 列
+file 非空 = true | stack 非空 = true
+── 2) 捕获类型错误 ──
+code = E2001 | kind = type
+── 3) 捕获索引/非表错误 ──
+code = E2003 | kind = index
+── 4) 捕获原生库报错 ──
+code = E2009 | kind = native
+── 5) assert 与 error() ──
+code = E2007 | kind = assert | assert 失败: 自定义断言
+code = E2008 | kind = user | 我主动报错
+── 6) 嵌套 try + raise(e) 重抛 ──
+  内层捕获: E2002
+  外层捕获: E2002 | kind = divzero
+── 7) 出错后程序继续跑，状态没坏 ──
+  第 3 个被跳过
+sum = 12 （期望 12）
+── 8) 表字段点号访问（e.code 就是靠它）──
+cfg.name = Ae | cfg.version = 2
+链式 cfg.nested.ok = true
+与下标等价 = true
+不存在的字段 = null
+字段赋值后 cfg.version = 3 | 等价 cfg["version"] = 3
+── 9) break 跳出带 try 的循环后仍能正常捕获 ──
+break 出 try 正常，k = 2
+仍可捕获 = user
+── 10) return 穿过 try 后仍能正常捕获 ──
+穿过 try 的返回值 = 42
+仍可捕获 = user

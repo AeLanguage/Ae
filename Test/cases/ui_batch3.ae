@@ -1,0 +1,247 @@
+// =============================================================================
+//  第三批验收：组（容器） / 定时器 / 渐变 / 虚线
+// -----------------------------------------------------------------------------
+//  判定方式：ui.pixel 看像素 + ui.send 造事件（和真实消息走同一条派发路径）。
+//
+//  注：定时器是【时间驱动】的，为了 golden 稳定，这里只用两种确定性用法：
+//      · ui.tick(fn)         每次 pump 都调 → 数 pump 次数
+//      · ui.timerOnce(0,fn)  立刻到期 + pump 触发
+//      周期定时器（ui.timer(50,…)）的真实时间行为放在 Test/ui_batch3_demo.ae
+//      那种手动/真环境里看，不进 golden（否则测试会飘）。
+// =============================================================================
+imp ui
+
+func inkIn(win, x0, y0, w, h) {          // 数一块区域里有多少非背景像素
+    local bg = ui.pixel(win, 0, 0)
+    local n = 0
+    local j = 0
+    while (j < h) {
+        local i = 0
+        while (i < w) {
+            if (ui.pixel(win, x0 + i, y0 + j) != bg) { n += 1 }
+            i += 1
+        }
+        j += 1
+    }
+    return n
+}
+
+func main() {
+    local w = ui.window("第三批验收", 340, 260)
+
+    // ── 1. 组：容器 ────────────────────────────────────────────────────────
+    local g = ui.group(w)
+    local box = ui.rect(g, 10, 10, 60, 30)
+    ui.setAll(box, {fill = true, fillColor = "#FF0000", stroke = 0})
+    local lab = ui.text(g, 40, 25, "OK")
+    ui.setAll(lab, {size = 12, color = "#FFFFFF", align = "center", valign = "middle",
+                    hits = false, z = 1})
+    local gp = ui.props(g)
+    prln("1) 组:", gp.kind, "| 子图形数 =", gp.shapes, "| 有包围盒 =", gp.hasBounds,
+         "| 建在窗口上 =", gp.win == w)
+    prln("2) 子图形的 win 指向【组】=", ui.props(box).win == g,
+         "| 种类 =", ui.get(box, "kind"), "| 文字也在组里 =", ui.props(lab).win == g)
+    prln("3) 组内像素 (20,20) 红 =", ui.pixel(w, 20, 20) == 0xFF0000,
+         "| 组的 x/y 默认 0 =", ui.get(g, "x") == 0)
+
+    // ── 2. 整组平移 / 隐藏 ────────────────────────────────────────────────
+    ui.setAll(g, {x = 120, y = 80})
+    prln("4) 整组平移: 原处空了 =", ui.pixel(w, 20, 20) != 0xFF0000,
+         "| 新处有红 =", ui.pixel(w, 140, 90) == 0xFF0000)
+    ui.set(g, "visible", false)
+    prln("5) 整组隐藏 =", ui.pixel(w, 140, 90) != 0xFF0000)
+    ui.set(g, "visible", true)
+
+    // ── 3. 组的裁剪：clip 是【相对组自己】的（组在 (120,80)，裁剪 0..40）──
+    ui.setAll(g, {clipX = 0, clipY = 0, clipW = 40, clipH = 40})
+    prln("6) 组裁剪(相对组): 区内 (140,90) 红 =", ui.pixel(w, 140, 90) == 0xFF0000,
+         "| 区外 (180,90) 空 =", ui.pixel(w, 180, 90) != 0xFF0000)
+    ui.setAll(g, {x = 0, y = 0, clipW = 0, clipH = 0})
+
+    // ── 4. 整组旋转：画的、点的都要跟着转 ────────────────────────────────
+    //   组内矩形 60x30（局部 10,10..70,40），包围盒中心 (40,25)
+    //   绕中心顺时针 90°：局部 (66,36) 转出去、(60,25) 从 (40,45) 转进来
+    prln("7) 未旋转: 局部(66,36) 红 =", ui.pixel(w, 66, 36) == 0xFF0000,
+         "| 矩形外面 (40,45) 空 =", ui.pixel(w, 40, 45) != 0xFF0000)
+    ui.set(g, "angle", 90)
+    prln("8) 整组转 90°: 局部(66,36) 空了 =", ui.pixel(w, 66, 36) != 0xFF0000,
+         "| (40,45) 有红 =", ui.pixel(w, 40, 45) == 0xFF0000)
+    local rotHits = 0
+    ui.on(g, "click", func(e) { rotHits += 1 })
+    ui.send(w, "click", {x = 40, y = 45})          // 转过之后才盖住的位置
+    ui.pump()
+    ui.send(w, "click", {x = 66, y = 36})          // 转之前的位置，现在打不到
+    ui.pump()
+    prln("9) 旋转后命中跟着转: 收到", rotHits, "次（应为 1）")
+    ui.off(g, "click")
+    ui.set(g, "angle", 0)
+
+    // ── 5. 事件：子图形 → 组 冒泡 ─────────────────────────────────────────
+    local childHits = 0
+    local groupHits = 0
+    local winHits = 0
+    ui.on(box, "click", func(e) { childHits += 1 })
+    ui.on(g,   "click", func(e) { groupHits += 1 })
+    ui.on(w,   "click", func(e) { winHits += 1 })
+    ui.send(w, "click", {x = 20, y = 20})
+    ui.pump()
+    prln("10) 点组内图形: 子图形 =", childHits, "组(冒泡) =", groupHits, "窗口 =", winHits,
+         "（应为 1 1 1）")
+
+    // 子图形 return true = 吃掉，组和窗口都不再收到
+    ui.off(box, "click")
+    ui.on(box, "click", func(e) { childHits += 1  return true })
+    ui.send(w, "click", {x = 20, y = 20})
+    ui.pump()
+    prln("11) 子图形 return true 吃掉: 子 =", childHits, "组 =", groupHits, "窗口 =", winHits,
+         "（应为 2 1 1）")
+
+    // 组吃掉：子图形没注册 handler，事件轮到组（组也 return true）
+    ui.off(box, "click")
+    ui.off(g, "click")
+    ui.on(g, "click", func(e) { groupHits += 1  return true })
+    ui.send(w, "click", {x = 20, y = 20})
+    ui.pump()
+    prln("12) 组 return true: 子 =", childHits, "组 =", groupHits, "窗口 =", winHits,
+         "（应为 2 2 1）")
+    ui.off(g, "click")
+    ui.off(w, "click")
+
+    // ── 6. 嵌套组：变换层层叠加 ──────────────────────────────────────────
+    local outer = ui.group(w)
+    local inner = ui.group(outer)
+    local deep  = ui.rect(inner, 5, 5, 20, 20)
+    ui.setAll(deep, {fill = true, fillColor = "#00FFFF", stroke = 0})
+    ui.setAll(outer, {x = 240, y = 160})
+    prln("13) 外层平移 → 内层图形在 (250,170) =", ui.pixel(w, 250, 170) == 0x00FFFF)
+    ui.setAll(inner, {x = 20, y = 10})
+    prln("14) 内层再平移 → 累加到 (270,180) =", ui.pixel(w, 270, 180) == 0x00FFFF,
+         "| 原处空了 =", ui.pixel(w, 250, 170) != 0x00FFFF)
+    local deepHits = 0
+    local outerHits = 0
+    ui.on(deep,  "click", func(e) { deepHits += 1 })
+    ui.on(outer, "click", func(e) { outerHits += 1 })
+    ui.send(w, "click", {x = 270, y = 180})
+    ui.pump()
+    prln("15) 嵌套组冒泡: 最内图形 =", deepHits, "最外组 =", outerHits, "（应为 1 1）")
+    ui.remove(outer)
+    prln("16) 删外层组: 内层图形一起没了 =", ui.pixel(w, 270, 180) != 0x00FFFF,
+         "| 窗口顶层条目数 =", len(ui.shapes(w)))
+
+    // ── 7. 组里也能用渐变（组合起来才是控件）────────────────────────────
+    local g2 = ui.group(w)
+    local bar2 = ui.rect(g2, 0, 0, 80, 10)
+    ui.setAll(bar2, {fill = true, fillColor = "#000000", fillColor2 = "#FFFFFF",
+                     gradient = "horizontal", stroke = 0})
+    ui.setAll(g2, {x = 240, y = 20})
+    local gl = ui.pixel(w, 242, 25)
+    local gr = ui.pixel(w, 318, 25)
+    prln("17) 组内渐变: 左端比右端暗 =", gl < gr)
+    ui.set(g2, "visible", false)
+
+    // ── 8. 渐变 ──────────────────────────────────────────────────────────
+    local grad = ui.rect(w, 20, 60, 100, 20)
+    ui.setAll(grad, {fill = true, fillColor = "#000000", fillColor2 = "#FFFFFF",
+                     stroke = 0, aa = false})
+    prln("18) 没设 gradient 时是纯色 =", ui.pixel(w, 25, 70) == ui.pixel(w, 115, 70))
+    ui.set(grad, "gradient", "horizontal")
+    local l1 = ui.pixel(w, 22, 70)
+    local l2 = ui.pixel(w, 70, 70)
+    local l3 = ui.pixel(w, 118, 70)
+    prln("19) horizontal 渐变: 左暗 < 中 < 右亮 =", l1 < l2 and l2 < l3,
+         "| 两端不是同一色 =", l1 != l3)
+    prln("20) 水平别名归一化: gradient =", ui.get(grad, "gradient"),
+         "| gradientAngle =", ui.get(grad, "gradientAngle"))
+    ui.set(grad, "gradient", "vertical")
+    prln("21) 换成 vertical: gradient =", ui.get(grad, "gradient"),
+         "| gradientAngle =", ui.get(grad, "gradientAngle"),
+         "| 上暗下亮 =", ui.pixel(w, 70, 62) < ui.pixel(w, 70, 78))
+    ui.set(grad, "gradient", "radial")
+    ui.setAll(grad, {fillColor = "#FFFFFF", fillColor2 = "#000000"})
+    local c0 = ui.pixel(w, 70, 70)
+    local c1 = ui.pixel(w, 22, 62)
+    prln("22) 径向(中心是 fillColor、边缘是 fillColor2): 中心更亮 =", c0 > c1,
+         "| 角落明显更暗 =", c1 < 0x808080)
+    ui.set(grad, "gradient", "")
+    prln("23) 关掉渐变 = 纯色 =", ui.pixel(w, 25, 70) == ui.pixel(w, 115, 70),
+         "| gradient ='" + ui.get(grad, "gradient") + "'")
+    ui.remove(grad)
+
+    // ── 9. 虚线 / 线帽 / 线接 ────────────────────────────────────────────
+    local solid = ui.line(w, 20, 130, 140, 130)
+    ui.setAll(solid, {stroke = 1, strokeColor = "#000000", aa = false})
+    local nSolid = inkIn(w, 20, 129, 120, 3)
+    local dash = ui.line(w, 20, 150, 140, 150)
+    ui.setAll(dash, {stroke = 1, strokeColor = "#000000", aa = false, dash = "6 3"})
+    local nDash = inkIn(w, 20, 149, 120, 3)
+    prln("24) 同样长的线: 实线着墨 =", nSolid, "虚线着墨 =", nDash,
+         "| 虚线明显更少 =", nDash < nSolid)
+    local dh = 0
+    ui.on(dash, "click", func(e) { dh += 1 })
+    local xs = {25, 27, 29, 31, 33, 35}          // 2px 间隔 → 必然跨过至少一个空隙
+    local k = 0
+    while (k < len(xs)) {
+        ui.send(w, "click", {x = xs[k + 1], y = 150})
+        ui.pump()
+        k += 1
+    }
+    prln("25) 虚线命中按整条算: 6 次点击命中", dh, "次（应为 6）")
+    prln("26) cap/join 读回来 =", ui.get(dash, "cap"), ui.get(dash, "join"),
+         "| dash =", ui.get(dash, "dash"))
+    ui.setAll(dash, {cap = "round", join = "miter"})
+    prln("27) 改线帽线接 =", ui.get(dash, "cap"), ui.get(dash, "join"),
+         "| 实线默认 =", ui.get(solid, "cap"), ui.get(solid, "join"))
+    ui.off(dash, "click")
+
+    // ── 10. 定时器 ───────────────────────────────────────────────────────
+    local frames = 0
+    local tk = ui.tick(func(e) { frames += 1 })
+    ui.pump()
+    ui.pump()
+    ui.pump()
+    prln("28) ui.tick: pump 3 次 → 回调", frames, "次（应为 3）")
+    ui.cancelTimer(tk)
+    ui.pump()
+    prln("29) 取消后不再触发 =", frames == 3, "| 再取消一次 =", ui.cancelTimer(tk))
+
+    local onceN = 0
+    local onceId = ui.timerOnce(0, func(e) { onceN += 1 })
+    prln("30) timerOnce 建出来了 =", onceId > 0, "| 到期前回调次数 =", onceN)
+    ui.pump()
+    prln("31) pump 后触发一次 =", onceN == 1)
+    ui.pump()
+    prln("32) 一次性: 再 pump 也不触发 =", onceN == 1)
+
+    local slowN = 0
+    local slow = ui.timer(100000, func(e) { slowN += 1 })
+    ui.pump()
+    prln("33) 周期 100 秒: 现在不触发 =", slowN == 0,
+         "| timers() 里能看到它 =", ui.timers()[slow].ms == 100000,
+         "| 周期记对 =", ui.timers()[slow].frame == false)
+    ui.cancelTimer(slow)
+    // ★ 注意：timers() 是【按 id 做键】的表，不是数组，所以 len() 不可靠（键不连续）
+    prln("34) 取消后三个定时器都查不到了 =",
+         ui.timers()[tk] == null and ui.timers()[onceId] == null and ui.timers()[slow] == null)
+
+    // 回调里能看到 e.id / e.kind / e.count；也能取消自己
+    local seenId = 0
+    local seenCount = -1
+    local seenKind = ""
+    local selfN = 0
+    local selfTk = 0
+    selfTk = ui.tick(func(e) {
+        seenId = e.id
+        seenCount = e.count
+        seenKind = e.kind
+        selfN += 1
+        ui.cancelTimer(selfTk)
+    })
+    ui.pump()
+    ui.pump()
+    prln("35) 回调参数: id 对 =", seenId == selfTk, "| kind =", seenKind,
+         "| 首次 count =", seenCount, "| 回调里取消自己 → 只跑", selfN, "次（应为 1）")
+
+    // ── 收尾 ─────────────────────────────────────────────────────────────
+    prln("36) 收尾: 窗口数 =", ui.count(), "| lastError =", ui.lastError())
+    ui.close(w)
+}
