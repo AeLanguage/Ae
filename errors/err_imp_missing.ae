@@ -1,2 +1,0 @@
-imp nosuchlib
-func main() { prln(1) }

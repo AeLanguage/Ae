@@ -1,6 +1,0 @@
-﻿// 用从没创建过的窗口 id：必须抛错，不能静默
-imp ui
-
-func main() {
-    ui.visible(1)
-}

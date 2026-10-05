@@ -1,5 +1,0 @@
-[就绪] 等待真实消息
-[事件] click x=63 y=38 target是按钮=true
-[事件] click x=125 y=63 target是按钮=true
-[汇总] 共收到 click 2 次
-[退出] 最后一条: click x=125 y=63 target是按钮=true

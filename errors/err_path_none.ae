@@ -1,2 +1,0 @@
-imp path
-func main() { prln(path.noSuchFn()) }

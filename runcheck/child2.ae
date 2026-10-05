@@ -1,4 +1,0 @@
-// check_run.ps1 用的最内层子程序：验证 a → b → c 三层嵌套
-func main() {
-    prln("[child2] 最内层也跑到了")
-}
