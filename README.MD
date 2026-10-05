@@ -72,7 +72,7 @@ $ ae hello.aeo
 ## 目录结构
 
 ```
-Ae/               语言实现（源码都在这儿）
+Apt/               语言实现（源码都在这儿）
 ├─ aec.cpp           编译器：词法/语法/类型检查 → AeBc 1.7 字节码
 ├─ ae.cpp            虚拟机：加载 .aeo、执行、诊断与调用栈
 ├─ aed.cpp           反汇编器：把 .aeo 打成可读的指令清单
@@ -86,14 +86,13 @@ Ae/               语言实现（源码都在这儿）
 │  ├─ ae_libutil.h                 库共用工具：参数检查 / lastError
 │  ├─ args.m  json.m               用 Ae 自己写的模块（不用编译）
 │  └─ *.dll / *.so                 构建产物（放这里就能被 imp 找到）
-├─ Test/                回归测试
-│  ├─ run.ps1           跑 cases/ 与 errors/（默认 70 个用例全绿）
-│  ├─ cases/*.ae|*.out  正向用例：必须编译并成功运行，输出与 .out 一致
-│  ├─ errors/*.ae|*.err 失败用例：必须失败，stderr 含 .err 里的文本
-│  └─ check_*.ps1       交互类自测：ui 事件、拖拽、鼠标、控制台中文
+Test/                回归测试
+├─ run.ps1           跑 cases/ 与 errors/（默认 70 个用例全绿）
+├─ cases/*.ae|*.out  正向用例：必须编译并成功运行，输出与 .out 一致
+├─ errors/*.ae|*.err 失败用例：必须失败，stderr 含 .err 里的文本
+└─ check_*.ps1       交互类自测：ui 事件、拖拽、鼠标、控制台中文
 ├─ build.ps1            Windows 一键构建（PowerShell）
-├─ build.sh             Linux / macOS 构建
-└─ build/               临时产物（可有可无，不进版本库）
+└─ build.sh             Linux / macOS 构建 
 ```
 
 ---
