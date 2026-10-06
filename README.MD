@@ -2,7 +2,7 @@
 
 **Ae** 是一门小巧但完整的动态脚本语言：语法干净、编译成字节码、自带系统库和窗口/图形库（`ui`）。
 
-它按“函数是一等公民”来设计：闭包, 传递, 匿名, 回调, 一样不少.
+它按“函数是一等公民”来设计：闭包、传递、匿名、回调，一样不少。
 
 ```ae
 imp io
@@ -41,7 +41,7 @@ $ ae hello.aeo
 
 **语言**
 
-- 19 个关键字：`if else while do imp try catch for in break continue return local func and or not true false null`
+- 20 个关键字：`if else while do imp try catch for in break continue return local func and or not true false null`
 - 6 种类型：`int`（64 位）`float` `bool` `null` `string` `table`，加上一等公民的 `func`
 - **闭包**（`func(x) { … }` 捕获外层变量）、`try/catch`、多返回值、复合赋值 `+= -= *= /=`
 - 表（table）同时当数组和字典用：`{1, 2, name = "x"}`；空表是假值，`==` 比身份、`equal()` 比内容
@@ -80,19 +80,21 @@ Apt/               语言实现（源码都在这儿）
 ├─ ae_diag.h         诊断渲染：错误码 / 摘录 / 光标 / help / 栈
 ├─ ae_native.h       原生库 ABI（当前 v4：脚本参数、读表、回调 Ae 函数）
 ├─ ae_libhost.h      宿主侧加载器：找库的目录顺序与候选文件名
-└─ lib/              标准库（4 个原生库 + 2 个 Ae 模块）
+├─ ae_path.h         路径的编码处理（Windows 上 argv 是 GBK、脚本里是 UTF-8）
+├─ lib/              标准库（4 个原生库 + 2 个 Ae 模块）
 │  ├─ io.cpp  os.cpp  path.cpp     跨平台原生库
-│  ├─ ui.cpp                       Windows 专用（GDI+），近 4000 行
+│  ├─ ui.cpp                       Windows 专用（GDI+），约 4200 行
 │  ├─ ae_libutil.h                 库共用工具：参数检查 / lastError
 │  ├─ args.m  json.m               用 Ae 自己写的模块（不用编译）
 │  └─ *.dll / *.so                 构建产物（放这里就能被 imp 找到）
 Test/                回归测试
-├─ run.ps1           跑 cases/ 与 errors/（默认 70 个用例全绿）
+├─ run.ps1           跑 cases/ 与 errors/（默认 74 个用例全绿）
 ├─ cases/*.ae|*.out  正向用例：必须编译并成功运行，输出与 .out 一致
 ├─ errors/*.ae|*.err 失败用例：必须失败，stderr 含 .err 里的文本
-└─ check_*.ps1       交互类自测：ui 事件、拖拽、鼠标、控制台中文
-├─ build.ps1            Windows 一键构建（PowerShell）
-└─ build.sh             Linux / macOS 构建 
+├─ check_*.ps1       交互 / 跨程序自测：ui 事件、拖拽、鼠标、控制台中文、run()
+└─ ui_*.ae           ui 库的演示脚本（会开窗口，不属于 run.ps1 用例）
+build.ps1             Windows 一键构建（PowerShell）
+build.sh              Linux / macOS 构建
 ```
 
 ---
@@ -267,7 +269,7 @@ $ aed hello.aeo           # 想看字节码长什么样
 | 相等 | `==` 比身份（表/函数）/值（标量）；`equal(a, b)` 比表内容；**`1 == 1.0` 会报错**，要显式统一类型 |
 | 运算 | `+ - * / %`（`/` 是整数除法：`7 / 2` = `3`，`7.0 / 2` = `3.5`）、比较、`and or not`、位运算；除数为 0 一律报错 |
 | 字符串 | UTF-8，`len()` 按码点算；索引从 **1** 开始；`+` 拼接（数字也能直接拼） |
-| 表 | `{1, 2, name = "x"}`；数组段从 1 连续，`len()` 数数组段、`count()` 数全部键；键只能是 int/string |
+| 表 | `{1, 2, name = "x"}`；数组段从 1 连续，`len()` 数数组段、`count()` 数全部键；键只能是 int / string / bool（float、表、null 作键会报错） |
 | 错误 | `try { } catch (e) { }`，`e` 里有 `code kind msg file line col stack`；`error()` / `assert()` / `exit(n)` |
 | 模块 | `imp mathx` → 找 `mathx.m`；模块里定义的 `func` 都能用 |
 | 标识符 | 只能用 ASCII 字母/数字/下划线 —— **中文只能写在字符串和注释里** |
@@ -293,13 +295,14 @@ $ aed hello.aeo           # 想看字节码长什么样
 | `json` | Ae 模块 | `decode` `decodeFile` / `encode` `encodePretty` `encodeFile` | 解析失败直接抛 `E2008` |
 | `args` | Ae 模块 | 命令行参数解析（`parse` / `parseOrExit`，另有 `usage` `intOr` `floatOr`） | 用法错误可自动打印帮助并 `exit(3)` |
 
-内置函数（不用 `imp`，共 35 个）：
+内置函数（不用 `imp`，共 36 个）：
 
 | 分类 | 函数 |
 |---|---|
 | 输入输出 | `pr` `prln` `inp` |
 | 类型与转换 | `len` `str` `int` `float` `type` |
 | 错误与控制 | `assert` `error` `exit` `raise` |
+| 子程序 | `run`（在一个程序里跑另一个 .aeo，跑完再回来） |
 | 字符串 | `substr` `ord` `chr` `find` `upper` `lower` `trim` `replace` `split` `join` `repeat` `format` |
 | 表 | `delete` `insert` `pop` `append` `count` `copy` `deepcopy` `equal` |
 | 内存回收 | `weak` `collect` `gcstats` |
@@ -333,15 +336,16 @@ powershell -ExecutionPolicy Bypass -File run.ps1 -Filter p13  # 只跑名字含 
 
 - `cases/<名字>.ae` + `cases/<名字>.out`：必须**编译并成功运行**，stdout 与 `.out` 完全一致。
 - `errors/<名字>.ae` + `errors/<名字>.err`：必须**失败**（编译期或运行期都行），stderr 里要包含 `.err` 的文本。
-- 加用例就是放一对文件进去，不用注册。当前规模：33 个正向 + 37 个失败 = **70 个用例**。
+- 加用例就是放一对文件进去，不用注册。当前规模：37 个正向 + 37 个失败 = **74 个用例**。
 
-交互类的东西（窗口、事件、拖拽、控制台中文）用单独的脚本测：
+交互类的东西（窗口、事件、拖拽、控制台中文）和跨程序的 `run()` 用单独的脚本测：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File check_events.ps1     # 点击/移动/进出/键盘/关窗回调
 powershell -ExecutionPolicy Bypass -File check_drag.ps1       # 标题栏拖动，且拖动期间动画不停
 powershell -ExecutionPolicy Bypass -File check_mouse.ps1      # 命中测试、鼠标形状、帧率不掉
 powershell -ExecutionPolicy Bypass -File check_console.ps1    # GBK 控制台里的中文输出
+powershell -ExecutionPolicy Bypass -File check_run.ps1        # run() 的跨程序行为：顺序 / 隔离 / 参数 / 退出码 / 错误传播
 ```
 
 这几个脚本会**真的创建窗口并投递鼠标/键盘消息**（屏幕上会闪一下窗口），需要有桌面会话；无头环境里跑不了。
