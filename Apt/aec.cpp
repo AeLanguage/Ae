@@ -107,6 +107,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include "ae_libhost.h"      // ★ 原生库加载（aec 只用它读导出表做编译期检查）
 #include "ae_diag.h"         // ★ 诊断系统（错误码 + 源码摘录 + 波浪线）
 #include "ae_console.h"     // ★ 控制台中文：绕开代码页
