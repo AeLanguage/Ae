@@ -1,0 +1,26 @@
+// 分代 GC 回归：老年代对象持有年轻对象时，minor 收集不能把年轻对象误清掉。
+//   root 活得够久会晋升到老年代；每轮往它里面写入一个新表，就建立一条
+//   「老 → 年轻」的边。这条边只有靠 remembered set 才能被 minor 看到，
+//   一旦漏掉，child 的内容就会被清空（只剩个空壳）。
+func main() {
+    local root = {}
+    local i = 0
+    while (i < 3000) {
+        local child = {i, i + 1, i + 2}        // 年轻对象
+        root["slot" + str(i % 8)] = child      // 老 → 年轻
+        local junk = {}                        // 顺手制造垃圾，逼 GC 反复跑
+        junk[1] = {}
+        junk[1][1] = junk                      // 环
+        i += 1
+    }
+
+    local ok = 0
+    i = 0
+    while (i < 8) {
+        local c = root["slot" + str(i)]
+        if (type(c) == "table" and count(c) == 3) { ok += 1 }
+        i += 1
+    }
+    prln("generational: kept=" + str(ok))
+    assert(ok == 8)
+}

@@ -1,0 +1,92 @@
+// GC 升级回归：弱值表（weak）、手动收集（collect）、统计观测（gcstats），
+// 以及增量 + 分代之下大批量环依旧要能被回收。
+//
+// 弱值表的语义：条目只在「值在别处还有强引用」时保留；强引用一消失，
+// 下一次收集就会把它清掉（无论完整收集是自动触发还是 collect() 触发）。
+//
+// 注意：填充必须写在函数里 —— 写在 main 里的话，循环变量会一直持有最后
+// 一个 payload，那一条会被正确地保留下来。
+func fillHash(cache, refs, n) {
+    local i = 0
+    while (i < n) {
+        local payload = {i, i + 1}
+        refs[i + 1] = payload        // 强引用保活
+        cache["k" + str(i)] = payload
+        i += 1
+    }
+}
+
+func fillArray(arr, refs, n) {
+    local i = 0
+    while (i < n) {
+        local payload = {i}
+        refs[100 + i] = payload      // 强引用保活
+        arr[i + 1] = payload
+        i += 1
+    }
+}
+
+func dropRefs(refs, base, n) {
+    local i = 0
+    while (i < n) {
+        refs[base + i] = null        // 撤掉强引用
+        i += 1
+    }
+}
+
+func main() {
+    // ① 哈希段的弱值
+    local cache = {}
+    weak(cache)
+    local refs = {}
+    fillHash(cache, refs, 50)
+    collect()
+    prln("hash kept=" + str(count(cache)))
+    assert(count(cache) == 50)       // 强引用还在 → 一个都不能少
+
+    dropRefs(refs, 1, 50)
+    collect()
+    prln("hash dropped=" + str(count(cache)))
+    assert(count(cache) == 0)        // 只剩弱引用 → 全部清除
+
+    // ② 数组段的弱值
+    local arr = {}
+    weak(arr)
+    fillArray(arr, refs, 20)
+    collect()
+    prln("array kept=" + str(count(arr)))
+    assert(count(arr) == 20)
+
+    dropRefs(refs, 100, 20)
+    collect()
+    prln("array dropped=" + str(count(arr)))
+    assert(count(arr) == 0)
+
+    // ③ 普通表：强引用必须保活
+    local strong = {}
+    local i = 0
+    while (i < 50) {
+        strong["k" + str(i)] = {i, i + 1}
+        i += 1
+    }
+    collect()
+    prln("strong=" + str(count(strong)))
+    assert(count(strong) == 50)
+
+    // ④ gcstats() 可观测
+    local s = gcstats()
+    prln("stats fields=" + str(count(s)))
+    assert(count(s) == 11)
+
+    // ⑤ 增量 + 分代下，大批量环依旧能被回收
+    i = 0
+    while (i < 2000) {
+        local a = {}
+        local b = {}
+        a[1] = b
+        b[1] = a
+        i += 1
+    }
+    collect()
+    prln("cycles ok")
+}

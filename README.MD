@@ -293,7 +293,7 @@ $ aed hello.aeo           # 想看字节码长什么样
 | `json` | Ae 模块 | `decode` `decodeFile` / `encode` `encodePretty` `encodeFile` | 解析失败直接抛 `E2008` |
 | `args` | Ae 模块 | 命令行参数解析（`parse` / `parseOrExit`，另有 `usage` `intOr` `floatOr`） | 用法错误可自动打印帮助并 `exit(3)` |
 
-内置函数（不用 `imp`，共 32 个）：
+内置函数（不用 `imp`，共 35 个）：
 
 | 分类 | 函数 |
 |---|---|
@@ -302,6 +302,20 @@ $ aed hello.aeo           # 想看字节码长什么样
 | 错误与控制 | `assert` `error` `exit` `raise` |
 | 字符串 | `substr` `ord` `chr` `find` `upper` `lower` `trim` `replace` `split` `join` `repeat` `format` |
 | 表 | `delete` `insert` `pop` `append` `count` `copy` `deepcopy` `equal` |
+| 内存回收 | `weak` `collect` `gcstats` |
+
+**内存回收**：表与闭包由 GC 统一管理，引用环（表环、递归闭包、二者混合）都会被回收。
+
+- `weak(t)` 把表变成**弱值表**：它的值不参与标记，条目只在「值在别处还有强引用」时保留。适合缓存、反向索引这类"登记过不代表要一直占着内存"的容器。`weak(t, "n")` 取消。
+- `collect()` 立刻同步完成一轮完整收集，返回本轮回收的对象数。
+- `gcstats()` 返回统计表：`collections` `minor` `major` `reclaimed` `young` `old` `steps` `barriers` `rescans` `remembered` `threshold`。
+
+```ae
+local cache = {}
+weak(cache)
+cache["user"] = loadUser()      // 别处还拿着它 → 条目保留
+collect()                        // 别处都放开了 → 条目自动消失
+```
 
 `args.m` / `json.m` 本身就是写模块的范例，可以直接当参考。
 

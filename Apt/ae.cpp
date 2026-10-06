@@ -59,6 +59,7 @@
 #include <unordered_set>
 #include <cstdio>
 #include <cstdlib>
+#include <new>               // ★ placement new（Value 的 union 成员激活要用）
 #include "ae_libhost.h"      // ★ 原生库加载 + ABI
 #include "ae_diag.h"         // ★ 诊断系统
 #include "ae_console.h"     // ★ 控制台中文：绕开代码页
@@ -114,13 +115,88 @@ enum ValueKind {
 
 struct Value;    // 前置声明
 struct Closure;  // 前置声明（闭包，见 Value 之后）
+struct Table;
+struct Upvalue;
+
+// =============================================================================
+//  ★ 分代 + 增量 GC 的对象头（每个 Table / Closure 各一份）
+//     · color：三色标记。白=未访问（可能死）/ 灰=待扫描 / 黑=已扫描（本轮存活）
+//     · age  ：经历过的收集次数。达到 GC_PROMOTE_AGE 即晋升老年代；
+//              minor 只扫描并回收年轻对象，"老 → 年轻" 的边由 remembered set 覆盖
+//     · weakValues：弱值表。值不参与标记，标记结束后清除指向已死对象的条目
+//     GC 不移动对象，开放上值与原生 ABI 的借用指针在有效期内保持稳定。
+// =============================================================================
+enum : uint8_t { GC_WHITE = 0, GC_GRAY = 1, GC_BLACK = 2 };
+enum : uint8_t { GC_PROMOTE_AGE = 2 };
+
+struct GcHeader {
+    uint8_t color      = GC_WHITE;
+    uint8_t age        = 0;
+    bool    weakValues = false;   // 弱值表
+    bool    remembered = false;   // 是否已在 remembered set 中（去重用）
+};
+
+// ★ 写屏障：实现放在 VM 之后（此处只有前置声明），运行时经 g_gcVM 找到当前 VM。
+//   单线程 VM，因此用全局指针而非 thread_local。
+extern VM* g_gcVM;
+void gcBarrierTable(Table* t);                        // 表内容被改写
+void gcBarrierTableValue(Table* t, const Value& v);   // 表内容被改写且已知新值
+void gcBarrierClosure(Closure* c);                    // 闭包上值被改写
+void gcBarrierValue(const Value& v);                  // 根区域（栈/局部/全局）写入
+void gcBarrierUpvalue(const std::shared_ptr<Upvalue>& up);  // 上值被改写/关闭
 
 // 哈希段：键（严格判等 + 可哈希） → 值
 struct TableKey {
+    using StrPtr = shared_ptr<string>;
+
     ValueKind kind;
-    int64_t   i;
-    double    f;
-    shared_ptr<string> str;
+    // ★ 同理瘦身（40 → 24 字节）：i / f / str 互斥，不必各自占位。
+    //   它是 std::map 的键，节点数量多，省下来的都是实打实的内存与缓存。
+    union {
+        int64_t i;
+        double  f;
+        StrPtr  str;
+    };
+
+    TableKey() : kind(VAL_NULL), i(0) {}
+    ~TableKey() { release(); }
+
+    TableKey(const TableKey& o)     : kind(VAL_NULL), i(0) { copyFrom(o); }
+    TableKey(TableKey&& o) noexcept : kind(VAL_NULL), i(0) { moveFrom(o); }
+    TableKey& operator=(const TableKey& o) {
+        if (this != &o) { release(); copyFrom(o); }
+        return *this;
+    }
+    TableKey& operator=(TableKey&& o) noexcept {
+        if (this != &o) { release(); moveFrom(o); }
+        return *this;
+    }
+
+    void release() {
+        if (kind == VAL_STR) str.~StrPtr();
+        kind = VAL_NULL;
+    }
+    void copyFrom(const TableKey& o) {
+        switch (o.kind) {
+            case VAL_INT:
+            case VAL_BOOL:   kind = o.kind;  i = o.i; break;
+            case VAL_DOUBLE: kind = VAL_DOUBLE; f = o.f; break;
+            case VAL_STR:    kind = VAL_STR; ::new (&str) StrPtr(o.str); break;
+            default: kind = VAL_NULL; i = 0; break;
+        }
+    }
+    void moveFrom(TableKey& o) {
+        switch (o.kind) {
+            case VAL_INT:
+            case VAL_BOOL:   kind = o.kind;  i = o.i; break;
+            case VAL_DOUBLE: kind = VAL_DOUBLE; f = o.f; break;
+            case VAL_STR:    kind = VAL_STR; ::new (&str) StrPtr(std::move(o.str)); o.str.~StrPtr(); break;
+            default: kind = VAL_NULL; i = 0; break;
+        }
+        o.kind = VAL_NULL;
+    }
+    // 字符串键：union 成员不能直接赋值，必须 placement new
+    void setStr(const StrPtr& s) { release(); kind = VAL_STR; ::new (&str) StrPtr(s); }
 
     bool equals(const TableKey& o) const;
     size_t hash() const;
@@ -141,48 +217,105 @@ struct TableKey {
     }
 };
 
-struct Table {
-    // 数组段：逻辑索引 1 → 内部下标 0，尾部自动扩容（Lua 风格）
-    vector<Value> arr;
+// （Table 的定义已下移到 Value / HashMap 之后 —— 哈希槽里要放完整的 Value）
 
-    // 哈希段
-    std::map<TableKey, Value> mapv;
-
-    bool get(const Value& key, Value& out) const;
-    void set(const Value& key, const Value& val);
-    size_t length() const;      // #t：连续整数键前缀长度
-};
-
+// =============================================================================
+//  Value：Ae 里所有值的载体
+//  ★ 布局瘦身（64 → 24 字节）
+//    str / tab / fn 三者天然互斥 —— 一个值只可能是其中一种 —— 原来却各自占满
+//    16 字节，48 字节白烧在【每一个】值上：栈槽、局部槽、表数组段、上值、常量池。
+//    并进同一个 union 之后，整个值只剩 kind(4) + 对齐填充(4) + union(16) = 24 字节。
+//    代价：union 里含 shared_ptr，构造 / 析构 / 拷贝 / 移动必须手写；
+//    对标量成员（i / f）仍然只是直接赋值的平凡操作，没有额外开销。
+// =============================================================================
 struct Value {
+    using StrPtr = shared_ptr<string>;
+    using TabPtr = shared_ptr<Table>;
+    using FunPtr = shared_ptr<Closure>;
+
     ValueKind kind;
     union {
         int64_t  i;
         double   f;
+        StrPtr  str;    // 仅 VAL_STR
+        TabPtr  tab;    // 仅 VAL_TABLE
+        FunPtr  fn;     // 仅 VAL_FUNC
     };
-    shared_ptr<string>  str;    // 仅 VAL_STR
-    shared_ptr<Table>   tab;    // 仅 VAL_TABLE
-    shared_ptr<Closure> fn;     // ★ 仅 VAL_FUNC
 
-    Value() : kind(VAL_NULL) {}
-    Value(int64_t v) : kind(VAL_INT), i(v) {}
+    // ── 生命周期（union 含非平凡成员，必须手写这五个）─────────────────
+    Value() : kind(VAL_NULL), i(0) {}
+    ~Value() { release(); }
+
+    Value(const Value& o)     : kind(VAL_NULL), i(0) { copyFrom(o); }
+    Value(Value&& o) noexcept : kind(VAL_NULL), i(0) { moveFrom(o); }
+
+    Value& operator=(const Value& o) {
+        if (this != &o) { release(); copyFrom(o); }
+        return *this;
+    }
+    Value& operator=(Value&& o) noexcept {
+        if (this != &o) { release(); moveFrom(o); }
+        return *this;
+    }
+
+    // 标量：平凡成员，直接初始化
+    Value(int64_t v) : kind(VAL_INT),    i(v) {}
     Value(double v)  : kind(VAL_DOUBLE), f(v) {}
-    explicit Value(shared_ptr<string> s) : kind(VAL_STR), str(s) {}
-    Value(bool b)    : kind(VAL_BOOL), i(b ? 1 : 0) {}
+    Value(bool b)    : kind(VAL_BOOL),   i(b ? 1 : 0) {}
+    // 引用类型：union 成员必须用 placement new 激活
+    explicit Value(const StrPtr& s) : kind(VAL_STR),   str(s) {}
+    explicit Value(const TabPtr& t) : kind(VAL_TABLE), tab(t) {}
+    explicit Value(const FunPtr& c) : kind(VAL_FUNC),  fn(c)  {}
     Value(const string& s) : kind(VAL_STR), str(make_shared<string>(s)) {}
 
-    static Value makeNull()  { return Value(); }
-    static Value makeTable(const shared_ptr<Table>& t) {
-        Value v; v.kind = VAL_TABLE; v.tab = t; return v;
+    void release() {
+        switch (kind) {
+            case VAL_STR:   str.~StrPtr(); break;
+            case VAL_TABLE: tab.~TabPtr(); break;
+            case VAL_FUNC:  fn.~FunPtr();  break;
+            default: break;                 // 标量 / null 无需析构
+        }
+        kind = VAL_NULL;
     }
+
+    void copyFrom(const Value& o) {
+        switch (o.kind) {
+            case VAL_INT:
+            case VAL_BOOL:   kind = o.kind;  i = o.i; break;
+            case VAL_DOUBLE: kind = VAL_DOUBLE; f = o.f; break;
+            case VAL_STR:    kind = VAL_STR;   ::new (&str) StrPtr(o.str); break;
+            case VAL_TABLE:  kind = VAL_TABLE; ::new (&tab) TabPtr(o.tab); break;
+            case VAL_FUNC:   kind = VAL_FUNC;  ::new (&fn)  FunPtr(o.fn);  break;
+            default: kind = VAL_NULL; i = 0; break;
+        }
+    }
+
+    void moveFrom(Value& o) {
+        switch (o.kind) {
+            case VAL_INT:
+            case VAL_BOOL:   kind = o.kind;  i = o.i; break;
+            case VAL_DOUBLE: kind = VAL_DOUBLE; f = o.f; break;
+            case VAL_STR:    kind = VAL_STR;   ::new (&str) StrPtr(std::move(o.str)); o.str.~StrPtr(); break;
+            case VAL_TABLE:  kind = VAL_TABLE; ::new (&tab) TabPtr(std::move(o.tab)); o.tab.~TabPtr(); break;
+            case VAL_FUNC:   kind = VAL_FUNC;  ::new (&fn)  FunPtr(std::move(o.fn));  o.fn.~FunPtr();  break;
+            default: kind = VAL_NULL; i = 0; break;
+        }
+        o.kind = VAL_NULL;                   // 源已被搬空
+    }
+
+    static Value makeNull()  { return Value(); }
+    static Value makeTable(const TabPtr& t)  { return Value(t); }
+    static Value makeFunc (const FunPtr& c)  { return Value(c); }
 
     bool isTable() const { return kind == VAL_TABLE; }
     bool isFunc()  const { return kind == VAL_FUNC; }
     bool isNull()  const { return kind == VAL_NULL; }
-
-    static Value makeFunc(const shared_ptr<Closure>& c) {
-        Value v; v.kind = VAL_FUNC; v.fn = c; return v;
-    }
 };
+
+// ★ 布局回归保护：一旦有人往 Value / TableKey 里加成员而不放进 union，
+//   尺寸就会悄悄长回去，这里直接编译失败，比性能退化后才发现好得多。
+static_assert(sizeof(Value)    == 24, "Value 变大了：str/tab/fn 必须留在同一个 union 里");
+static_assert(sizeof(TableKey) == 24, "TableKey 变大了：i/f/str 必须留在同一个 union 里");
 
 // =============================================================================
 //  ★ 闭包：上值 + 函数值
@@ -202,6 +335,7 @@ struct Upvalue {
 
 // 闭包 = 函数原型（funcId）+ 捕获到的上值表
 struct Closure {
+    GcHeader gc;                                   // ★ GC 头（颜色 / 代龄）
     uint16_t funcId = 0;
     std::vector<std::shared_ptr<Upvalue>> ups;
 };
@@ -240,9 +374,10 @@ inline size_t TableKey::hash() const {
             return h ^ (size_t)(bits ^ (bits >> 32));
         }
         case VAL_STR: {
-            const char* s = str ? str->c_str() : "";
-            std::hash<string> hs;
-            return h ^ hs(std::string(s));
+            if (!str) return h;
+            // ★ 直接哈希手上这份 string，别再拷一份临时出来 —— 键哈希是最热的路径，
+            //   原来每次都 std::string(s) 构造临时，等于白白多一次分配加拷贝。
+            return h ^ std::hash<std::string>()(*str);
         }
         default:        return h;
     }
@@ -251,11 +386,10 @@ inline size_t TableKey::hash() const {
 // Value → TableKey（仅限允许的键类型）
 inline TableKey toKey(const Value& v) {
     TableKey k;
-    k.kind = v.kind;
     switch (v.kind) {
-        case VAL_INT:   k.i = v.i; break;
-        case VAL_BOOL:  k.i = v.i; break;
-        case VAL_STR:   k.str = v.str; break;
+        case VAL_INT:   k.kind = VAL_INT;  k.i = v.i; break;
+        case VAL_BOOL:  k.kind = VAL_BOOL; k.i = v.i; break;
+        case VAL_STR:   k.setStr(v.str); break;      // union 成员要 placement new
         case VAL_DOUBLE:                       // ★ P2-17：浮点键定案为错误
             throw runtime_error("表键不能是 float（请用 int(x) 或 str(x) 明确键类型）");
         default:
@@ -298,7 +432,188 @@ inline const char* typeName(ValueKind k) {
 }
 
 // =============================================================================
-//  Table 成员函数实现（此时 Value 已完整定义）
+//  HashMap：表的哈希段（开放寻址 + 线性探测）
+//  ★ 原来是 std::map（红黑树）：每次插入都要 new 一个节点，查找 O(log n)，
+//    而且一路指针追逐把缓存打穿 —— 表越大越明显。
+//    换成扁平的开放寻址数组之后：
+//      · 查找 / 插入摊还 O(1)，槽在内存里连续，一个缓存行能挨着看好几个槽
+//      · 整段就是一块 vector，彻底没有逐节点分配
+//      · 删除留"墓碑"而不是搬移，免得把别人的探测链截断
+//  ⚠ 键只允许 int / bool / string（toKey 已经把 float / 表 / null 挡在外面），
+//    所以 kind == VAL_NULL 可以安全地表示"这槽空着"，不必再加一层标志数组。
+//  ⚠ 迭代顺序：槽序 ≠ 键序。语言规范承诺哈希段【按键排序】输出（打印表、
+//    取键列表），那两处请用 forEachSorted；GC 扫描这类不在乎顺序的用槽序。
+// =============================================================================
+struct HashMap {
+    static constexpr uint8_t EMPTY = 0;   // 从没用过：探测到这里就可以收工
+    static constexpr uint8_t FULL  = 1;   // 在用
+    static constexpr uint8_t TOMB  = 2;   // 删过：探测还得继续往前走
+
+    struct Slot {
+        TableKey key;
+        Value    val;
+        uint8_t  state = EMPTY;
+    };
+
+    std::vector<Slot> slots;
+    size_t count = 0;      // 在用元素数（等价于原来的 mapv.size()）
+    size_t used  = 0;      // 在用 + 墓碑，决定什么时候该重建
+
+    bool   empty() const { return count == 0; }
+    size_t size()  const { return count; }
+    void   clear()       { slots.clear(); count = 0; used = 0; }
+
+    // ── 查找 ──────────────────────────────────────────────────────────────
+    const Slot* find(const TableKey& k) const {
+        if (slots.empty()) return nullptr;
+        const size_t mask = slots.size() - 1;        // 容量恒为 2 的幂
+        const size_t start = k.hash() & mask;
+        for (size_t probe = 0; probe <= mask; probe++) {
+            const Slot& s = slots[(start + probe) & mask];
+            if (s.state == EMPTY) return nullptr;    // 撞见真空 → 后面不可能还有
+            if (s.state == FULL && s.key.equals(k)) return &s;
+        }
+        return nullptr;
+    }
+    Slot* find(const TableKey& k) {
+        return const_cast<Slot*>(static_cast<const HashMap*>(this)->find(k));
+    }
+
+    bool get(const TableKey& k, Value& out) const {
+        if (const Slot* s = find(k)) { out = s->val; return true; }
+        return false;
+    }
+
+    // ── 写入 ──────────────────────────────────────────────────────────────
+    void set(const TableKey& k, const Value& v) {
+        if (Slot* hit = find(k)) { hit->val = v; return; }   // 已存在：只改值
+        insertNew(k, v);
+    }
+
+    bool erase(const TableKey& k) {
+        Slot* s = find(k);
+        if (!s) return false;
+        eraseSlot(s);
+        return true;
+    }
+    void eraseSlot(Slot* s) {
+        s->key = TableKey();     // 放掉键（字符串引用）
+        s->val = Value();        // 放掉值
+        s->state = TOMB;
+        count--;
+        // used 不减：墓碑得留在探测链里，否则会截断别人查找时的退路
+    }
+
+    // ── 迭代（槽序，用于 GC 扫描这类不在乎顺序的场合）────────────────────
+    struct Iter {
+        Slot* p; Slot* e;
+        void skip() { while (p != e && p->state != FULL) ++p; }
+        Iter& operator++() { ++p; skip(); return *this; }
+        bool operator!=(const Iter& o) const { return p != o.p; }
+        Slot& operator*()  const { return *p; }
+        Slot* operator->() const { return p; }
+    };
+    struct ConstIter {
+        const Slot* p; const Slot* e;
+        void skip() { while (p != e && p->state != FULL) ++p; }
+        ConstIter& operator++() { ++p; skip(); return *this; }
+        bool operator!=(const ConstIter& o) const { return p != o.p; }
+        const Slot& operator*()  const { return *p; }
+        const Slot* operator->() const { return p; }
+    };
+    Iter begin()      { Slot* b = slots.data(); Iter it{b, b + slots.size()}; it.skip(); return it; }
+    Iter end()        { Slot* b = slots.data(); return Iter{b + slots.size(), b + slots.size()}; }
+    ConstIter begin() const { const Slot* b = slots.data(); ConstIter it{b, b + slots.size()}; it.skip(); return it; }
+    ConstIter end()   const { const Slot* b = slots.data(); return ConstIter{b + slots.size(), b + slots.size()}; }
+
+    // ★ 需要"顺序确定"的场合（打印表 / 取键列表）走这里：
+    //   哈希表的槽序是随插入历史变的，而规范承诺的是键序，所以这里排一次。
+    template <class F>
+    void forEachSorted(F&& f) const {
+        std::vector<const Slot*> v;
+        v.reserve(count);
+        for (const Slot& s : slots) if (s.state == FULL) v.push_back(&s);
+        std::sort(v.begin(), v.end(),
+                  [](const Slot* a, const Slot* b) { return a->key < b->key; });
+        for (const Slot* s : v) f(*s);
+    }
+
+private:
+    // 负载到 0.7 就重建；如果只是墓碑堆得多而元素不多，就地同容量重建清掉墓碑
+    void maybeGrow() {
+        if (slots.empty()) { rehash(8); return; }
+        if ((used + 1) * 10 >= slots.size() * 7) {
+            size_t want = slots.size();
+            if (count * 10 >= want * 5) want *= 2;   // 元素真的多 → 翻倍
+            rehash(want);
+        }
+    }
+
+    void insertNew(const TableKey& k, const Value& v) {
+        maybeGrow();
+        const size_t mask = slots.size() - 1;
+        const size_t start = k.hash() & mask;
+        Slot* tomb = nullptr;
+        for (size_t probe = 0; probe <= mask; probe++) {
+            Slot& s = slots[(start + probe) & mask];
+            if (s.state == FULL) continue;                 // 已确认不存在，跳过
+            if (s.state == TOMB) { if (!tomb) tomb = &s; continue; }
+            placeInto(tomb ? *tomb : s, tomb == nullptr, k, v);
+            return;
+        }
+        // 整段都是墓碑、没撞见真空：仍能复用墓碑（maybeGrow 一般会先把这情况清掉）
+        if (tomb) { placeInto(*tomb, false, k, v); return; }
+        throw std::runtime_error("哈希表内部错误：找不到可插入的槽");
+    }
+
+    void placeInto(Slot& dst, bool isFreshEmpty, const TableKey& k, const Value& v) {
+        if (isFreshEmpty) used++;   // 只有新占一个空位才增加占用；复用墓碑则不变
+        dst.key   = k;
+        dst.val   = v;
+        dst.state = FULL;
+        count++;
+    }
+
+    void rehash(size_t newCap) {
+        std::vector<Slot> old = std::move(slots);
+        slots.clear();
+        slots.resize(newCap);          // 新槽 state 一律是 EMPTY
+        count = 0;
+        used  = 0;
+        const size_t mask = slots.size() - 1;
+        for (Slot& s : old) {
+            if (s.state != FULL) continue;
+            const size_t start = s.key.hash() & mask;
+            for (size_t probe = 0; probe <= mask; probe++) {
+                Slot& d = slots[(start + probe) & mask];
+                if (d.state == EMPTY) {
+                    d.key   = std::move(s.key);
+                    d.val   = std::move(s.val);
+                    d.state = FULL;
+                    count++; used++;
+                    break;
+                }
+            }
+        }
+    }
+};
+
+struct Table {
+    GcHeader gc;                                   // ★ GC 头（颜色 / 代龄 / 弱值标记）
+
+    // 数组段：逻辑索引 1 → 内部下标 0，尾部自动扩容（Lua 风格）
+    vector<Value> arr;
+
+    // 哈希段：开放寻址（原 std::map 红黑树）
+    HashMap mapv;
+
+    bool get(const Value& key, Value& out) const;
+    void set(const Value& key, const Value& val);
+    size_t length() const;      // #t：连续整数键前缀长度
+};
+
+// =============================================================================
+//  Table 成员函数实现（此时 Value / HashMap 都已完整定义）
 // =============================================================================
 inline bool Table::get(const Value& key, Value& out) const {
     // 整数键：优先走数组段（支持连续 1-based 索引）
@@ -309,12 +624,11 @@ inline bool Table::get(const Value& key, Value& out) const {
             return true;
         }
     }
-    auto it = mapv.find(toKey(key));
-    if (it != mapv.end()) { out = it->second; return true; }
-    return false;   // 未定义 → 返回 null（由调用方填充）
+    return mapv.get(toKey(key), out);   // 未找到 → 不动 out（由调用方填 null）
 }
 
 inline void Table::set(const Value& key, const Value& val) {
+    gcBarrierTableValue(this, val);   // ★ 写屏障：增量期把黑对象退回灰 / 分代期登记老→年轻
     if (key.kind == VAL_INT) {
         // 整数键 → 数组段（Lua 风格：允许尾部追加，中间空洞补 null）
         int64_t idx = key.i;
@@ -326,12 +640,12 @@ inline void Table::set(const Value& key, const Value& val) {
             if (i >= arr.size()) arr.resize(i + 1, Value());   // 空洞补 null
             arr[i] = val;
         } else {
-            mapv[toKey(key)] = val;
+            mapv.set(toKey(key), val);
         }
         return;
     }
     // 其余键 → 哈希段
-    mapv[toKey(key)] = val;
+    mapv.set(toKey(key), val);
 }
 
 inline size_t Table::length() const {
@@ -376,7 +690,10 @@ struct CallFrame {
 
     // 帧退场前必须把所有开放上值"关掉"（否则闭包会指向已释放的 locals）
     void closeUpvalues() {
-        for (auto& kv : openUps) kv.second->close();
+        for (auto& kv : openUps) {
+            kv.second->close();
+            gcBarrierUpvalue(kv.second);   // ★ 上值关闭后值搬进堆：让进行中的标记看到它
+        }
         openUps.clear();
     }
 };
@@ -507,31 +824,75 @@ public:
     vector<shared_ptr<Closure>> funcHandles;      // ★ ABI v4：库持有的闭包句柄（下标+1 = handle）
     string nativeLastError;                       // set_error() 设置，lastError() 读取
 
-    // ★ 非移动式环收集器。
-    // shared_ptr 继续负责普通对象的即时析构；这里用 weak_ptr 记录全部表/闭包，
-    // 在字节码指令边界从 VM 根集合做标记，并清空不可达对象的出边以打破引用环。
-    vector<weak_ptr<Table>>   gcTables;
-    vector<weak_ptr<Closure>> gcClosures;
-    size_t gcAllocationDebt = 0;
-    size_t gcThreshold = 256;
-    size_t gcCollections = 0;
-    size_t gcReclaimed = 0;
-    bool   gcCollecting = false;
-    bool   gcStress = false;
-    bool   gcStats = false;
+    // =====================================================================
+    //  ★ 分代 + 增量的非移动式环收集器
+    //    shared_ptr 继续负责普通对象的即时析构；GC 只处理「环」——找出不可达对象
+    //    并清空其出边，让引用计数归零。在此之上叠加三层改进：
+    //      · 分代：minor 只扫描并回收年轻对象（age < GC_PROMOTE_AGE），
+    //        「老 → 年轻」的边由 remembered set 覆盖，避免每次都全堆扫描
+    //      · 增量：三色标记切成小步，在字节码安全点推进；写屏障保证标记期间
+    //        被改写的对象退回灰色重新扫描，因此标记可以跨指令暂停
+    //      · 弱表：值不参与标记，标记结束后清除指向已死对象的条目
+    // =====================================================================
+    enum class GcPhase { Idle, MarkRoots, Marking, Weak, Sweep };
+    static const size_t kMinorBeforeMajor = 8;   // 每 8 次 minor 做一次 major
+
+    vector<weak_ptr<Table>>   gcTables;      // 全部表的弱登记
+    vector<weak_ptr<Closure>> gcClosures;    // 全部闭包的弱登记
+
+    vector<shared_ptr<Table>>   gcTableSet;   // 本轮快照：保证收集期间对象地址稳定
+    vector<shared_ptr<Closure>> gcClosureSet;
+    vector<Table*>   gcGrayTables;            // 灰色工作队列
+    vector<Closure*> gcGrayClosures;
+    size_t gcGrayTableAt = 0, gcGrayClosureAt = 0;
+
+    vector<Table*>   gcRememberedTables;      // 分代：老对象可能指向年轻对象
+    vector<Closure*> gcRememberedClosures;
+    vector<weak_ptr<Upvalue>> gcRememberedUps;// 被改写过的上值（其值可能年轻）
+    vector<Table*>   gcNextRemTables;         // 下一轮的 remembered
+    vector<Closure*> gcNextRemClosures;
+
+    GcPhase gcPhase = GcPhase::Idle;
+    bool    gcIsMajor = false;
+    bool    gcGenerational = true;
+    bool    gcIncremental  = true;
+    bool    gcStress = false;
+    bool    gcStats  = false;
+    size_t  gcAllocationDebt = 0;
+    size_t  gcThreshold = 256;
+    size_t  gcMinorSinceMajor = 0;
+    size_t  gcStepBudget = 48;               // 每个安全点推进多少个工作单元
+    size_t  gcMarkWork = 0;                  // 本轮已处理的灰色对象数（兜底用）
+    size_t  gcCollections = 0, gcMinorCount = 0, gcMajorCount = 0;
+    size_t  gcReclaimed = 0, gcSteps = 0, gcBarriers = 0, gcRescans = 0;
+    size_t  gcLiveYoung = 0, gcLiveOld = 0, gcLastReclaimed = 0;
+
+    static bool envFlagOn(const char* name, bool defOn) {
+        const char* v = std::getenv(name);
+        if (!v || !*v) return defOn;
+        return !(std::strcmp(v, "0") == 0 || std::strcmp(v, "off") == 0);
+    }
+
+    VM* gcPrevVM = nullptr;                 // ★ 支持嵌套 VM（内置 run）：恢复外层全局指针
 
     VM() {
-        const char* stress = std::getenv("AE_GC_STRESS");
-        const char* stats  = std::getenv("AE_GC_STATS");
-        gcStress = stress && *stress && std::strcmp(stress, "0") != 0;
-        gcStats  = stats  && *stats  && std::strcmp(stats,  "0") != 0;
-        if (gcStress) gcThreshold = 1;
+        gcPrevVM = g_gcVM; g_gcVM = this;
+        gcStress = envFlagOn("AE_GC_STRESS", false);
+        gcStats  = envFlagOn("AE_GC_STATS",  false);
+        gcGenerational = envFlagOn("AE_GC_GENERATIONAL", true);
+        gcIncremental  = envFlagOn("AE_GC_INCREMENTAL",  true);
+        // 压力模式：每个安全点只推进一步，且分配一次就想收集 —— 最大程度打断标记
+        if (gcStress) { gcThreshold = 1; gcStepBudget = 1; }
     }
 
     ~VM() {
+        if (g_gcVM == this) g_gcVM = gcPrevVM;
         if (gcStats)
             cerr << "[gc] collections=" << gcCollections
-                 << " reclaimed=" << gcReclaimed << "\n";
+                 << " minor=" << gcMinorCount << " major=" << gcMajorCount
+                 << " reclaimed=" << gcReclaimed
+                 << " steps=" << gcSteps << " barriers=" << gcBarriers
+                 << " rescans=" << gcRescans << "\n";
         breakAllManagedCycles();
     }
 
@@ -539,6 +900,18 @@ public:
         shared_ptr<Table> value = make_shared<Table>();
         gcTables.push_back(value);
         gcAllocationDebt++;
+        // 收集进行中分配的对象该怎么上色，取决于当前处于哪一阶段：
+        //   · MarkRoots / Marking：标灰入队，让它的出边被扫描；同时进本轮快照
+        //     （队列里存的是裸指针，必须保证收集期间它不会被析构）
+        //   · Weak / Sweep：标记已结束，再入队也没人扫，灰色还会被清扫误判成
+        //     "不可达" —— 必须直接标黑，本轮放它一马
+        if (gcPhase == GcPhase::MarkRoots || gcPhase == GcPhase::Marking) {
+            value->gc.color = GC_GRAY;
+            gcGrayTables.push_back(value.get());
+            gcTableSet.push_back(value);
+        } else if (gcPhase != GcPhase::Idle) {
+            value->gc.color = GC_BLACK;
+        }
         return value;
     }
 
@@ -546,111 +919,359 @@ public:
         shared_ptr<Closure> value = make_shared<Closure>();
         gcClosures.push_back(value);
         gcAllocationDebt++;
+        if (gcPhase == GcPhase::MarkRoots || gcPhase == GcPhase::Marking) {
+            value->gc.color = GC_GRAY;
+            gcGrayClosures.push_back(value.get());
+            gcClosureSet.push_back(value);
+        } else if (gcPhase != GcPhase::Idle) {
+            value->gc.color = GC_BLACK;
+        }
         return value;
     }
 
-    void maybeCollectGarbage() {
-        if (!gcCollecting && gcAllocationDebt >= gcThreshold)
-            collectGarbage();
+    // ── 分代判定 ──────────────────────────────────────────────────────
+    bool gcParticipates(const GcHeader& h) const {
+        return gcIsMajor || !gcGenerational || h.age < GC_PROMOTE_AGE;
+    }
+    bool gcIsOld(const GcHeader& h) const {
+        return gcGenerational && h.age >= GC_PROMOTE_AGE;
     }
 
-    void collectGarbage() {
-        if (gcCollecting) return;
-        gcCollecting = true;
-        struct FlagReset {
-            bool& flag;
-            ~FlagReset() { flag = false; }
-        } reset{gcCollecting};
+    // ── 三色标记 ──────────────────────────────────────────────────────
+    //  返回 true 表示「目标是本轮参与的年轻对象」（供 remembered 保留判断）
+    bool gcShadeTable(Table* t) {
+        if (!t) return false;
+        if (!gcParticipates(t->gc)) return false;
+        if (t->gc.color == GC_WHITE) { t->gc.color = GC_GRAY; gcGrayTables.push_back(t); }
+        return true;
+    }
+    bool gcShadeClosure(Closure* c) {
+        if (!c) return false;
+        if (!gcParticipates(c->gc)) return false;
+        if (c->gc.color == GC_WHITE) { c->gc.color = GC_GRAY; gcGrayClosures.push_back(c); }
+        return true;
+    }
+    bool gcShadeValue(const Value& v) {
+        if (v.kind == VAL_TABLE) return gcShadeTable(v.tab.get());
+        if (v.kind == VAL_FUNC)  return gcShadeClosure(v.fn.get());
+        return false;
+    }
 
-        // 锁住快照，确保断环过程中对象地址稳定；收集结束后统一释放这些临时强引用。
-        vector<shared_ptr<Table>> tables;
-        vector<shared_ptr<Closure>> closures;
-        tables.reserve(gcTables.size());
-        closures.reserve(gcClosures.size());
-        for (const weak_ptr<Table>& weak : gcTables)
-            if (shared_ptr<Table> value = weak.lock()) tables.push_back(std::move(value));
-        for (const weak_ptr<Closure>& weak : gcClosures)
-            if (shared_ptr<Closure> value = weak.lock()) closures.push_back(std::move(value));
+    // 扫描一个对象的出边；弱值表的值不参与标记
+    bool gcScanTable(Table* t) {
+        if (!t) return false;
+        if (t->gc.weakValues) return false;
+        bool hit = false;
+        for (const Value& v : t->arr) if (gcShadeValue(v)) hit = true;
+        // 哈希段：GC 扫描不在乎顺序，直接走槽序最快
+    for (const HashMap::Slot& s : t->mapv) if (gcShadeValue(s.val)) hit = true;
+        return hit;
+    }
+    bool gcScanClosure(Closure* c) {
+        if (!c) return false;
+        bool hit = false;
+        for (const shared_ptr<Upvalue>& up : c->ups) if (up && gcShadeValue(up->get())) hit = true;
+        return hit;
+    }
 
-        unordered_set<const Table*> markedTables;
-        unordered_set<const Closure*> markedClosures;
-        vector<const Table*> tableWork;
-        vector<const Closure*> closureWork;
+    // remembered set 存的是裸指针，而对象可能在两轮收集之间被 shared_ptr 析构。
+    // 每轮开始用本轮快照筛一遍：不在快照里的对象已经不存在，绝不能再解引用。
+    void gcPruneRemembered() {
+        unordered_set<const Table*> aliveTables;
+        aliveTables.reserve(gcTableSet.size());
+        for (const shared_ptr<Table>& t : gcTableSet) aliveTables.insert(t.get());
+        unordered_set<const Closure*> aliveClosures;
+        aliveClosures.reserve(gcClosureSet.size());
+        for (const shared_ptr<Closure>& c : gcClosureSet) aliveClosures.insert(c.get());
 
-        auto markTable = [&](const Table* value) {
-            if (value && markedTables.insert(value).second) tableWork.push_back(value);
-        };
-        auto markClosure = [&](const Closure* value) {
-            if (value && markedClosures.insert(value).second) closureWork.push_back(value);
-        };
-        auto markValue = [&](const Value& value) {
-            if (value.kind == VAL_TABLE) markTable(value.tab.get());
-            else if (value.kind == VAL_FUNC) markClosure(value.fn.get());
-        };
+        vector<Table*> keptTables;
+        keptTables.reserve(gcRememberedTables.size());
+        for (Table* t : gcRememberedTables)
+            if (t && aliveTables.count(t)) keptTables.push_back(t);
+        gcRememberedTables = std::move(keptTables);
 
-        for (const Value& value : stack) markValue(value);
-        for (const Value& value : globals) markValue(value);
-        for (const NativeRoots& roots : nativeRoots) {
-            for (const Value& value : roots.args) markValue(value);
-            for (const shared_ptr<Table>& value : roots.tables) markTable(value.get());
-            for (const shared_ptr<Closure>& value : roots.funcs) markClosure(value.get());
+        vector<Closure*> keptClosures;
+        keptClosures.reserve(gcRememberedClosures.size());
+        for (Closure* c : gcRememberedClosures)
+            if (c && aliveClosures.count(c)) keptClosures.push_back(c);
+        gcRememberedClosures = std::move(keptClosures);
+    }
+
+    // ── 一轮收集的开始 ────────────────────────────────────────────────
+    void gcStart(bool major) {
+        gcIsMajor = major;
+        gcPhase = GcPhase::MarkRoots;
+        gcTableSet.clear(); gcClosureSet.clear();
+        gcTableSet.reserve(gcTables.size());
+        gcClosureSet.reserve(gcClosures.size());
+        for (const weak_ptr<Table>& w : gcTables)
+            if (shared_ptr<Table> s = w.lock()) gcTableSet.push_back(std::move(s));
+        for (const weak_ptr<Closure>& w : gcClosures)
+            if (shared_ptr<Closure> s = w.lock()) gcClosureSet.push_back(std::move(s));
+        for (const shared_ptr<Table>& t : gcTableSet)     t->gc.color = GC_WHITE;
+        for (const shared_ptr<Closure>& c : gcClosureSet) c->gc.color = GC_WHITE;
+        gcGrayTables.clear(); gcGrayClosures.clear();
+        gcGrayTableAt = gcGrayClosureAt = 0;
+        gcNextRemTables.clear(); gcNextRemClosures.clear();
+        gcPruneRemembered();     // ★ 用本轮快照筛掉两轮之间已析构的裸指针
+        gcLiveYoung = gcLiveOld = 0;
+        gcLastReclaimed = 0;
+        gcMarkWork = 0;
+    }
+
+    void gcMarkRoots() {
+        for (const Value& v : stack) gcShadeValue(v);
+        for (const Value& v : globals) gcShadeValue(v);
+        for (const NativeRoots& r : nativeRoots) {
+            for (const Value& v : r.args) gcShadeValue(v);
+            for (const shared_ptr<Table>& t : r.tables) gcShadeTable(t.get());
+            for (const shared_ptr<Closure>& c : r.funcs) gcShadeClosure(c.get());
         }
-        for (const shared_ptr<Closure>& value : funcHandles) markClosure(value.get());
-        for (const CallFrame& frame : callStack) {
-            for (const Value& value : frame.locals) markValue(value);
-            markClosure(frame.closure.get());
-            for (const auto& entry : frame.openUps) {
-                const shared_ptr<Upvalue>& up = entry.second;
-                if (up) markValue(up->get());
+        for (const shared_ptr<Closure>& c : funcHandles) gcShadeClosure(c.get());
+        for (const CallFrame& f : callStack) {
+            for (const Value& v : f.locals) gcShadeValue(v);
+            gcShadeClosure(f.closure.get());
+            for (const auto& e : f.openUps)
+                if (e.second) gcShadeValue(e.second->get());
+        }
+        // 分代：remembered 里的老对象要扫出边以发现年轻对象。
+        // major 时工作队列已覆盖全部对象，无需重复。
+        if (gcGenerational && !gcIsMajor) {
+            for (Table* t : gcRememberedTables)
+                if (t && gcScanTable(t)) gcNextRemTables.push_back(t);
+            for (Closure* c : gcRememberedClosures)
+                if (c && gcScanClosure(c)) gcNextRemClosures.push_back(c);
+            for (const weak_ptr<Upvalue>& w : gcRememberedUps)
+                if (shared_ptr<Upvalue> up = w.lock()) gcShadeValue(up->get());
+        }
+    }
+
+    // ── 推进一小步（增量） ────────────────────────────────────────────
+    bool gcHasGray() const {
+        return gcGrayTableAt < gcGrayTables.size() ||
+               gcGrayClosureAt < gcGrayClosures.size();
+    }
+
+    // 一轮标记允许的工作总量；超了就退化为一次性跑完
+    size_t gcMarkWorkLimit() const {
+        return (gcTableSet.size() + gcClosureSet.size()) * 2 + 1024;
+    }
+
+    void gcProcessOneGray() {
+        gcMarkWork++;
+        if (gcGrayTableAt < gcGrayTables.size()) {
+            Table* t = gcGrayTables[gcGrayTableAt++];
+            t->gc.color = GC_BLACK;
+            bool old = gcIsOld(t->gc);
+            if (gcScanTable(t) && old) gcNextRemTables.push_back(t);
+        } else {
+            Closure* c = gcGrayClosures[gcGrayClosureAt++];
+            c->gc.color = GC_BLACK;
+            bool old = gcIsOld(c->gc);
+            if (gcScanClosure(c) && old) gcNextRemClosures.push_back(c);
+        }
+    }
+
+    void gcAdvance() {
+        gcSteps++;
+        switch (gcPhase) {
+            case GcPhase::MarkRoots:
+                gcMarkRoots();
+                gcPhase = GcPhase::Marking;
+                break;
+            case GcPhase::Marking: {
+                size_t budget = gcStepBudget;
+                while (budget > 0 && gcHasGray()) { gcProcessOneGray(); budget--; }
+                if (!gcHasGray()) {
+                    gcPhase = GcPhase::Weak;
+                } else if (gcMarkWork > gcMarkWorkLimit()) {
+                    // 兜底：分配速度超过标记速度，工作队列会无界增长。
+                    // 此时退化为一次性跑完剩余标记（一次长暂停换来收敛）。
+                    while (gcHasGray()) gcProcessOneGray();
+                    gcPhase = GcPhase::Weak;
+                }
+                break;
+            }
+            case GcPhase::Weak:
+                gcClearWeakEntries();
+                gcPhase = GcPhase::Sweep;
+                break;
+            case GcPhase::Sweep:
+                gcSweep();
+                gcFinish();
+                break;
+            default: break;
+        }
+    }
+
+    // 字节码安全点：按需启动一轮，并推进一小步
+    void gcStep() {
+        if (gcPhase == GcPhase::Idle) {
+            if (gcAllocationDebt < gcThreshold) return;
+            bool major = !gcGenerational || gcMinorSinceMajor >= kMinorBeforeMajor;
+            if (major) gcMinorSinceMajor = 0; else gcMinorSinceMajor++;
+            gcStart(major);
+        }
+        gcAdvance();
+        // 关闭增量时一轮跑到底（便于对比与排错）
+        if (!gcIncremental) { while (gcPhase != GcPhase::Idle) gcAdvance(); }
+    }
+
+    // 同步完成一轮完整收集（collect() 用）
+    size_t collectGarbageSync() {
+        while (gcPhase != GcPhase::Idle) gcAdvance();   // 先跑完可能进行中的一轮
+        gcStart(true);
+        while (gcPhase != GcPhase::Idle) gcAdvance();
+        return gcLastReclaimed;
+    }
+
+    // ── 弱表：清除指向已死对象的条目 ──────────────────────────────────
+    //  「已死」= 本轮参与标记且未被标记。老对象在 minor 中不参与，视为存活。
+    bool gcValueDead(const Value& v) const {
+        if (v.kind == VAL_TABLE && v.tab) {
+            if (!gcParticipates(v.tab->gc)) return false;
+            return v.tab->gc.color != GC_BLACK;
+        }
+        if (v.kind == VAL_FUNC && v.fn) {
+            if (!gcParticipates(v.fn->gc)) return false;
+            return v.fn->gc.color != GC_BLACK;
+        }
+        return false;   // 标量不归 GC 管
+    }
+
+    void gcClearWeakEntries() {
+        for (const shared_ptr<Table>& t : gcTableSet) {
+            if (!t->gc.weakValues) continue;
+            for (size_t i = 0; i < t->arr.size(); i++)
+                if (gcValueDead(t->arr[i])) t->arr[i] = Value();
+            while (!t->arr.empty() && t->arr.back().kind == VAL_NULL) t->arr.pop_back();
+            // 哈希段：按下标扫；eraseSlot 只置墓碑、不搬元素，所以下标不会失效
+            for (size_t i = 0; i < t->mapv.slots.size(); i++) {
+                HashMap::Slot& s = t->mapv.slots[i];
+                if (s.state == HashMap::FULL && gcValueDead(s.val))
+                    t->mapv.eraseSlot(&s);
             }
         }
+    }
 
-        size_t tableAt = 0, closureAt = 0;
-        while (tableAt < tableWork.size() || closureAt < closureWork.size()) {
-            while (tableAt < tableWork.size()) {
-                const Table* table = tableWork[tableAt++];
-                for (const Value& value : table->arr) markValue(value);
-                for (const auto& entry : table->mapv) markValue(entry.second);
-            }
-            while (closureAt < closureWork.size()) {
-                const Closure* closure = closureWork[closureAt++];
-                for (const shared_ptr<Upvalue>& up : closure->ups)
-                    if (up) markValue(up->get());
-            }
-        }
-
+    // ── 清扫：清空不可达对象的出边，引用计数随之归零 ──────────────────
+    void gcSweep() {
         size_t reclaimed = 0;
-        size_t live = 0;
-        for (const shared_ptr<Table>& table : tables) {
-            if (markedTables.count(table.get())) {
-                live++;
+        for (const shared_ptr<Table>& t : gcTableSet) {
+            GcHeader& h = t->gc;
+            if (!gcParticipates(h)) { gcLiveOld++; continue; }
+            if (h.color == GC_BLACK) {
+                if (h.age < 255) h.age++;
+                if (gcIsOld(h)) {
+                    gcLiveOld++;
+                    // 刚晋升：它的出边可能指向年轻对象，保守登记进 remembered
+                    if (!h.remembered) { h.remembered = true; gcNextRemTables.push_back(t.get()); }
+                } else gcLiveYoung++;
             } else {
-                table->arr.clear();
-                table->mapv.clear();
+                t->arr.clear(); t->mapv.clear();
+                h.color = GC_WHITE;
                 reclaimed++;
             }
         }
-        for (const shared_ptr<Closure>& closure : closures) {
-            if (markedClosures.count(closure.get())) {
-                live++;
+        for (const shared_ptr<Closure>& c : gcClosureSet) {
+            GcHeader& h = c->gc;
+            if (!gcParticipates(h)) { gcLiveOld++; continue; }
+            if (h.color == GC_BLACK) {
+                if (h.age < 255) h.age++;
+                if (gcIsOld(h)) {
+                    gcLiveOld++;
+                    if (!h.remembered) { h.remembered = true; gcNextRemClosures.push_back(c.get()); }
+                } else gcLiveYoung++;
             } else {
-                closure->ups.clear();
+                c->ups.clear();
+                h.color = GC_WHITE;
                 reclaimed++;
             }
         }
-
-        tables.clear();
-        closures.clear();
-        gcTables.erase(remove_if(gcTables.begin(), gcTables.end(),
-            [](const weak_ptr<Table>& value) { return value.expired(); }), gcTables.end());
-        gcClosures.erase(remove_if(gcClosures.begin(), gcClosures.end(),
-            [](const weak_ptr<Closure>& value) { return value.expired(); }), gcClosures.end());
-
-        gcCollections++;
         gcReclaimed += reclaimed;
-        gcAllocationDebt = 0;
-        gcThreshold = gcStress ? 1 : std::max<size_t>(256, live * 2 + 32);
+        gcLastReclaimed = reclaimed;
     }
+
+    void gcFinish() {
+        gcCollections++;
+        if (gcIsMajor) gcMajorCount++; else gcMinorCount++;
+        gcAllocationDebt = 0;
+        gcThreshold = gcStress ? 1
+                    : std::max<size_t>(256, (gcLiveYoung + gcLiveOld) * 2 + 32);
+
+        // 重建 remembered：先清旧标记，再按本轮结果重新置位
+        for (Table* t : gcRememberedTables)   if (t) t->gc.remembered = false;
+        for (Closure* c : gcRememberedClosures) if (c) c->gc.remembered = false;
+        gcRememberedTables = std::move(gcNextRemTables);
+        gcRememberedClosures = std::move(gcNextRemClosures);
+        for (Table* t : gcRememberedTables)   if (t) t->gc.remembered = true;
+        for (Closure* c : gcRememberedClosures) if (c) c->gc.remembered = true;
+
+        // 上值登记：只保留「当前值是年轻对象」的那些，避免无界增长
+        vector<weak_ptr<Upvalue>> keepUps;
+        for (const weak_ptr<Upvalue>& w : gcRememberedUps) {
+            shared_ptr<Upvalue> up = w.lock();
+            if (!up) continue;
+            const Value& v = up->get();
+            Table*   t = (v.kind == VAL_TABLE) ? v.tab.get() : nullptr;
+            Closure* c = (v.kind == VAL_FUNC)  ? v.fn.get()  : nullptr;
+            bool young = (t && !gcIsOld(t->gc)) || (c && !gcIsOld(c->gc));
+            if (young) keepUps.push_back(w);
+        }
+        gcRememberedUps = std::move(keepUps);
+
+        // 登记表瘦身
+        gcTables.erase(remove_if(gcTables.begin(), gcTables.end(),
+            [](const weak_ptr<Table>& w) { return w.expired(); }), gcTables.end());
+        gcClosures.erase(remove_if(gcClosures.begin(), gcClosures.end(),
+            [](const weak_ptr<Closure>& w) { return w.expired(); }), gcClosures.end());
+
+        gcTableSet.clear(); gcClosureSet.clear();
+        gcGrayTables.clear(); gcGrayClosures.clear();
+        gcGrayTableAt = gcGrayClosureAt = 0;
+        gcPhase = GcPhase::Idle;
+    }
+
+    // ── 写屏障的宿主实现（由文件末尾的自由函数调用进来） ──────────────
+    void onBarrierObject(GcHeader& h, bool isTable, void* obj) {
+        gcBarriers++;
+        // 分代：老对象被改写 → 可能新建了「老 → 年轻」的边
+        if (gcIsOld(h) && !h.remembered) {
+            h.remembered = true;
+            if (gcPhase == GcPhase::Idle) {
+                if (isTable) gcRememberedTables.push_back((Table*)obj);
+                else         gcRememberedClosures.push_back((Closure*)obj);
+            } else {
+                if (isTable) gcNextRemTables.push_back((Table*)obj);
+                else         gcNextRemClosures.push_back((Closure*)obj);
+            }
+        }
+        // 增量：黑对象被改写 → 退回灰色，稍后重新扫描它的出边
+        if ((gcPhase == GcPhase::Marking || gcPhase == GcPhase::MarkRoots) &&
+            h.color == GC_BLACK) {
+            h.color = GC_GRAY;
+            if (isTable) gcGrayTables.push_back((Table*)obj);
+            else         gcGrayClosures.push_back((Closure*)obj);
+            gcRescans++;
+        }
+    }
+
+    void onBarrierValue(const Value& v) {
+        gcBarriers++;
+        // 根区域写入：标记进行中时新值必须被标灰，否则本轮会被误回收
+        if (gcPhase == GcPhase::Marking || gcPhase == GcPhase::MarkRoots)
+            gcShadeValue(v);
+    }
+
+    void onBarrierUpvalue(const shared_ptr<Upvalue>& up) {
+        if (!up) return;
+        onBarrierValue(up->get());
+        // 分代：这个上值被改写过，它的值可能是年轻对象，供 minor 扫描
+        if (gcGenerational) gcRememberedUps.push_back(up);
+    }
+
+    // 兼容旧名：同步完成一轮完整收集（内部走分代 + 增量状态机）
+    size_t collectGarbage() { return collectGarbageSync(); }
 
     // VM 销毁时不再区分根：先断开所有托管对象的出边，保证最后的环也能析构。
     void breakAllManagedCycles() {
@@ -841,7 +1462,7 @@ static std::string utf8Encode(unsigned cp) {
         if (stack.empty()) throw runtime_error("栈下溢");
         Value v = stack.back(); stack.pop_back(); return v;
     }
-    void push(const Value& v) { stack.push_back(v); }
+    void push(const Value& v) { stack.push_back(v); gcBarrierValue(v); }
 
     // ★ P0-7：转换失败不再静默返回 0，而是抛出可读的运行时错误
     int64_t toInt(const Value& v) {
@@ -924,16 +1545,16 @@ static std::string utf8Encode(unsigned cp) {
                     if (i > 0) s += ", ";
                     s += strOf(t->arr[i], path);
                 }
-                // 哈希段
-                for (const auto& kv : t->mapv) {
+                // 哈希段（★ 走排序迭代：规范承诺表的字符串形式是按键序的）
+                t->mapv.forEachSorted([&](const HashMap::Slot& hs) {
                     if (!s.empty() && s.back() != '{') s += ", ";
-                    const TableKey& k = kv.first;
+                    const TableKey& k = hs.key;
                     if (k.kind == VAL_STR)      s += "\"" + string(k.str ? k.str->c_str() : "") + "\"";
                     else if (k.kind == VAL_INT) s += to_string(k.i);
                     else if (k.kind == VAL_BOOL) s += (k.i ? "true" : "false");
                     else if (k.kind == VAL_DOUBLE) s += to_string(k.f);
-                    s += " = " + strOf(kv.second, path);
-                }
+                    s += " = " + strOf(hs.val, path);
+                });
                 s += "}";
                 path.pop_back();
                 return s;
@@ -1373,7 +1994,10 @@ static std::string utf8Encode(unsigned cp) {
         seen[t] = nv;
         nt->arr.resize(t->arr.size());
         for (size_t i = 0; i < t->arr.size(); i++) nt->arr[i] = deepCopy(t->arr[i], seen);
-        for (const auto& kv : t->mapv) nt->mapv[kv.first] = deepCopy(kv.second, seen);
+        // 深拷贝不在乎顺序，走槽序即可
+        for (const HashMap::Slot& hs : t->mapv)
+            nt->mapv.set(hs.key, deepCopy(hs.val, seen));
+        gcBarrierTable(nt.get());   // ★ 新表刚填满：让进行中的标记重新扫描它的出边
         return nv;
     }
     // 深相等（环安全：已在比较中的对视为相等）
@@ -1390,10 +2014,10 @@ static std::string utf8Encode(unsigned cp) {
         if (ta->arr.size() != tb->arr.size() || ta->mapv.size() != tb->mapv.size()) return false;
         for (size_t i = 0; i < ta->arr.size(); i++)
             if (!deepEqual(ta->arr[i], tb->arr[i], seen)) return false;
-        for (const auto& kv : ta->mapv) {
-            auto it = tb->mapv.find(kv.first);
-            if (it == tb->mapv.end()) return false;
-            if (!deepEqual(kv.second, it->second, seen)) return false;
+        for (const HashMap::Slot& hs : ta->mapv) {
+            Value other;
+            if (!tb->mapv.get(hs.key, other)) return false;
+            if (!deepEqual(hs.val, other, seen)) return false;
         }
         return true;
     }
@@ -1401,7 +2025,7 @@ static std::string utf8Encode(unsigned cp) {
     static int64_t tableCount(const Table* t) {
         int64_t n = 0;
         for (const Value& v : t->arr) if (v.kind != VAL_NULL) n++;
-        for (const auto& kv : t->mapv) if (kv.second.kind != VAL_NULL) n++;
+        for (const HashMap::Slot& hs : t->mapv) if (hs.val.kind != VAL_NULL) n++;
         return n;
     }
     // ★ P2-12：printf 风格格式化
@@ -1469,7 +2093,8 @@ static std::string utf8Encode(unsigned cp) {
     //     11=substr 12=ord 13=chr 14=find 15=upper 16=lower 17=trim
     //     18=replace 19=split 20=join 21=repeat 22=format
     //     23=delete 24=insert 25=pop 26=append 27=count
-    //     28=copy 29=deepcopy 30=equal
+    //     28=copy 29=deepcopy 30=equal 31=raise 32=run
+    //     33=weak 34=collect 35=gcstats   ★ GC：弱值表 / 手动收集 / 统计
     // =========================================================================
     void invoke(uint8_t funcId, uint8_t argc, uint8_t want) {
         size_t produced = 0;
@@ -1557,6 +2182,47 @@ static std::string utf8Encode(unsigned cp) {
             if (a.empty() || a.size() > 2)
                 throw runtime_error("run() 需要 1 个参数（.aeo 路径），可选第 2 个参数是字符串数组（传给子程序）");
             push(Value((int64_t)builtinRun(a)));
+            produced = 1;
+        } else if (funcId == 33) {                // ★ weak(t [, mode])：把表变成弱值表
+            vector<Value> a = takeArgs(argc);
+            if (a.size() < 1 || a.size() > 2)
+                throw runtime_error("weak() 需要 1~2 个参数：weak(表) 或 weak(表, \"v\")");
+            if (!a[0].isTable())
+                throw runtime_error("weak() 的第一个参数必须是表");
+            string mode = (a.size() > 1) ? asStr(a[1], "weak") : string("v");
+            if (mode == "v" || mode == "values") {
+                a[0].tab->gc.weakValues = true;
+            } else if (mode == "n" || mode == "none") {
+                a[0].tab->gc.weakValues = false;
+            } else if (mode == "k" || mode == "keys") {
+                throw runtime_error("weak() 暂不支持弱键：Ae 的表键只能是 int/float/bool/string，"
+                                    "字符串不归 GC 管理，弱键没有实际效果");
+            } else {
+                throw runtime_error("weak() 的模式只支持 \"v\"（弱值）与 \"n\"（取消弱引用）");
+            }
+            gcBarrierTable(a[0].tab.get());       // 弱标记改变了它的遍历方式
+            push(a[0]);
+            produced = 1;
+        } else if (funcId == 34) {                // ★ collect()：同步完成一轮完整收集
+            takeArgs(argc);
+            push(Value((int64_t)collectGarbageSync()));
+            produced = 1;
+        } else if (funcId == 35) {                // ★ gcstats()：GC 观测
+            takeArgs(argc);
+            shared_ptr<Table> t = allocTable();
+            t->set(Value(string("collections")), Value((int64_t)gcCollections));
+            t->set(Value(string("minor")),       Value((int64_t)gcMinorCount));
+            t->set(Value(string("major")),       Value((int64_t)gcMajorCount));
+            t->set(Value(string("reclaimed")),   Value((int64_t)gcReclaimed));
+            t->set(Value(string("young")),       Value((int64_t)gcLiveYoung));
+            t->set(Value(string("old")),         Value((int64_t)gcLiveOld));
+            t->set(Value(string("steps")),       Value((int64_t)gcSteps));
+            t->set(Value(string("barriers")),    Value((int64_t)gcBarriers));
+            t->set(Value(string("rescans")),     Value((int64_t)gcRescans));
+            t->set(Value(string("remembered")),
+                   Value((int64_t)(gcRememberedTables.size() + gcRememberedClosures.size())));
+            t->set(Value(string("threshold")),   Value((int64_t)gcThreshold));
+            push(Value::makeTable(t));
             produced = 1;
         } else if (funcId == 22) {                // ★ P2-12：format(fmt, ...)
             vector<Value> a = takeArgs(argc);
@@ -1666,6 +2332,7 @@ static std::string utf8Encode(unsigned cp) {
                         p = q + sep.size();
                     }
                     t->arr.push_back(Value(make_shared<string>(s.substr(p))));
+                    gcBarrierTable(t.get());   // ★ 新表刚填满：让进行中的标记重新扫描
                     push(Value::makeTable(t));
                     produced = 1;
                     break;
@@ -1708,8 +2375,7 @@ static std::string utf8Encode(unsigned cp) {
                     while (!t->arr.empty() && t->arr.back().kind == VAL_NULL) t->arr.pop_back();
                     found = true;
                 } else {
-                    auto it = t->mapv.find(toKey(k));
-                    if (it != t->mapv.end()) { t->mapv.erase(it); found = true; }
+                    if (t->mapv.erase(toKey(k))) found = true;
                 }
                 push(Value(found));
                 produced = 1;
@@ -1854,7 +2520,7 @@ static std::string utf8Encode(unsigned cp) {
     void execLoop(size_t stopDepth) {
         while (pc < code.size()) {
             if (stopDepth > 0 && callStack.size() <= stopDepth) return;
-            maybeCollectGarbage();
+            gcStep();                        // ★ GC 安全点：按需启动一轮并推进一小步
             instrPC = pc;                    // ★ 记录当前指令起点，出错时用它定位
             uint8_t op = code[pc++];
             try {
@@ -1991,6 +2657,7 @@ static std::string utf8Encode(unsigned cp) {
                     if (slot >= currentLocals->size())
                         throw runtime_error("LOCAL_STORE 局部槽越界: " + to_string(slot));
                     (*currentLocals)[slot] = pop();
+                    gcBarrierValue((*currentLocals)[slot]);   // ★ 根区域写入
                     break;
                 }
                 case 0x31: { // LOCAL_LOAD u16
@@ -2049,16 +2716,17 @@ static std::string utf8Encode(unsigned cp) {
                     for (size_t i = 0; i < t->arr.size(); i++)
                         if (t->arr[i].kind != VAL_NULL)
                             out->arr.push_back(Value((int64_t)(i + 1)));
-                    for (const auto& kv : t->mapv) {
-                        if (kv.second.kind == VAL_NULL) continue;
-                        switch (kv.first.kind) {
-                            case VAL_INT:    out->arr.push_back(Value((int64_t)kv.first.i)); break;
-                            case VAL_BOOL:   out->arr.push_back(Value(kv.first.i != 0)); break;
-                            case VAL_DOUBLE: out->arr.push_back(Value(kv.first.f)); break;
-                            case VAL_STR:    out->arr.push_back(Value(kv.first.str ? *kv.first.str : string())); break;
+                    // ★ 走排序迭代：规范承诺"先数组段 1..n，再哈希段按键序"
+                    t->mapv.forEachSorted([&](const HashMap::Slot& hs) {
+                        if (hs.val.kind == VAL_NULL) return;
+                        switch (hs.key.kind) {
+                            case VAL_INT:    out->arr.push_back(Value((int64_t)hs.key.i)); break;
+                            case VAL_BOOL:   out->arr.push_back(Value(hs.key.i != 0)); break;
+                            case VAL_DOUBLE: out->arr.push_back(Value(hs.key.f)); break;
+                            case VAL_STR:    out->arr.push_back(Value(hs.key.str ? *hs.key.str : string())); break;
                             default: break;
                         }
-                    }
+                    });
                     push(Value::makeTable(out));
                     break;
                 }
@@ -2205,6 +2873,7 @@ static std::string utf8Encode(unsigned cp) {
                             cl->ups.push_back(callStack.back().closure->ups[d.index]);
                         }
                     }
+                    gcBarrierClosure(cl.get());  // ★ 新闭包刚填好上值：让进行中的标记重新扫描
                     push(Value::makeFunc(cl));
                     break;
                 }
@@ -2221,7 +2890,9 @@ static std::string utf8Encode(unsigned cp) {
                     if (callStack.empty() || !callStack.back().closure ||
                         i >= callStack.back().closure->ups.size())
                         throw runtime_error("SET_UPVAL：当前帧没有这个上值（字节码内部不一致）");
-                    callStack.back().closure->ups[i]->get() = pop();
+                    shared_ptr<Upvalue> up = callStack.back().closure->ups[i];
+                    up->get() = pop();
+                    gcBarrierUpvalue(up);   // ★ 上值被改写：shade 新值，并供 minor 扫描
                     break;
                 }
                 case 0x47: { // CLOSE_SLOT u16(slot)：把一个局部槽上的上值"关掉"
@@ -2231,7 +2902,9 @@ static std::string utf8Encode(unsigned cp) {
                         CallFrame& fr = callStack.back();
                         for (size_t k = 0; k < fr.openUps.size(); k++) {
                             if (fr.openUps[k].first == slot) {
-                                fr.openUps[k].second->close();
+                                shared_ptr<Upvalue> up = fr.openUps[k].second;
+                                up->close();
+                                gcBarrierUpvalue(up);   // ★ 同上值关闭
                                 fr.openUps.erase(fr.openUps.begin() + (long)k);
                                 break;
                             }
@@ -2646,6 +3319,31 @@ static void renderRunError(VM& vm, const std::string& what, const char* codeHint
         p = q + 1;
     }
     aediag::printDiag(d, vm.sourceTextOf(fi));
+}
+
+// =============================================================================
+//  ★ 写屏障的宿主实现：转发给当前活动的 VM
+//     Table::set / 栈 push / 局部与全局写入 / 上值改写都会走到这里。
+//     屏障在 GC 空闲时几乎只是一个分支判断，只有在标记进行中才真正干活。
+// =============================================================================
+VM* g_gcVM = nullptr;
+
+void gcBarrierTable(Table* t) {
+    if (g_gcVM && t) g_gcVM->onBarrierObject(t->gc, true, t);
+}
+void gcBarrierTableValue(Table* t, const Value& v) {
+    if (!g_gcVM || !t) return;
+    g_gcVM->onBarrierObject(t->gc, true, t);
+    g_gcVM->onBarrierValue(v);          // 新值直接标灰，避免它在本轮被误回收
+}
+void gcBarrierClosure(Closure* c) {
+    if (g_gcVM && c) g_gcVM->onBarrierObject(c->gc, false, c);
+}
+void gcBarrierValue(const Value& v) {
+    if (g_gcVM) g_gcVM->onBarrierValue(v);
+}
+void gcBarrierUpvalue(const std::shared_ptr<Upvalue>& up) {
+    if (g_gcVM) g_gcVM->onBarrierUpvalue(up);
 }
 
 // =============================================================================

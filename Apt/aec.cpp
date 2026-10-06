@@ -846,7 +846,14 @@ public:
 
     // ★ 模块（.m）基础设施
     // ★ 文件存在判断走 aepath：中文文件名在 Windows 上也能找到（UTF-8 / ANSI 两种编码都试）
-    static bool fileAt(const string& p) { string real; return aepath::resolvePath(p, &real); }
+    //   ★ realOut 必须接住 resolve 出来的【真实 UTF-8 路径】——原来把它丢掉了，
+    //     后面 readFileText 只按 UTF-8 一种解释打开，中文路径下必然失败。
+    static bool fileAt(const string& p, string* realOut = nullptr) {
+        string real;
+        if (!aepath::resolvePath(p, &real)) return false;
+        if (realOut) *realOut = real;
+        return true;
+    }
     vector<string> libSearchDirs() const {
         return aehost::searchDirs(srcName == "<source>" ? string() : aehost::dirOf(srcName));
     }
@@ -878,7 +885,8 @@ public:
         string path;
         for (const string& d : libSearchDirs()) {
             string p = d + "/" + name + ".m";
-            if (fileAt(p)) { path = p; break; }
+            // ★ 用 resolve 出来的真实 UTF-8 路径，而不是拼出来的原始字节串
+            if (fileAt(p, &path)) break;
         }
         string msrc;                                  // ★ 用宽字符读：中文名的 .m 模块也能加载
         if (!aepath::readFileText(path, &msrc)) throw runtime_error("无法打开模块文件: " + path);
@@ -1004,6 +1012,9 @@ public:
         if (name == "equal")    return 30;
         if (name == "raise")    return 31;      // ★ 错误捕获：重新抛出
         if (name == "run")      return BID_run;  // ★ 运行另一个 .aeo（同一个进程里，跑完再回来）
+        if (name == "weak")     return 33;       // ★ GC：把表标记为弱值表
+        if (name == "collect")  return 34;       // ★ GC：同步完成一轮完整收集
+        if (name == "gcstats")  return 35;       // ★ GC：返回统计表
         return 0xFF;
     }
 
@@ -3169,7 +3180,7 @@ int main(int argc, char** argv) {
             if (a == "-q" || a == "--quiet") {
                 quiet = true;
             } else if (a == "-o" && i + 1 < argc) {
-                outPath = argv[++i];
+                outPath = aepath::ansiToUtf8(argv[++i]);
             } else if (!inPath.empty() && outPath.empty() && a[0] != '-') {
                 outPath = a;
             } else if (inPath.empty()) {

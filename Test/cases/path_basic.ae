@@ -56,7 +56,7 @@ func main() {
 
     prln("")
     prln("── 顺手演示：按扩展名筛选 ──")
-    local all = collect(root, root, {})
+    local all = collectFiles(root, root, {})
     local txt = 0
     local md = 0
     local i = 1
@@ -101,12 +101,13 @@ func pad(n) {
 }
 
 // 收集所有文件（不含目录）的相对路径
-func collect(root, dir, acc) {
+//   （不能叫 collect —— 那是 GC 的内建函数名）
+func collectFiles(root, dir, acc) {
     local names = sortStrings(io.listDir(dir))
     local i = 1
     while (i <= len(names)) {
         local full = path.join(dir, names[i])
-        if (io.isDir(full)) { collect(root, full, acc) }
+        if (io.isDir(full)) { collectFiles(root, full, acc) }
         else { append(acc, path.normalize(full)) }
         i += 1
     }
