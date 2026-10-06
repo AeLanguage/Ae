@@ -1,15 +1,23 @@
 // =============================================================================
-//  Ae 编译器 (aec = Ae Compiler)  ——  支持自定义函数 + 局部变量 + 递归
-//                                      + 字符串拼接 + len/str/int/float/type 内置
-//                                      + 【数组】{e1, e2, ...} / a[i] / a[i] = v
+//  Ae 编译器 (aec)  ——  把 .ae 源码编译成字节码，交给 ae 执行
 // -----------------------------------------------------------------------------
-//  ▌本版新增（值的基石）：
-//      · null 字面量：a = null        （TK_NULL，编译为 LOAD_CONST 常量池 NULL 项）
-//      · type(x) 内置函数 → 返回类型名字符串（"null"/"int"/"float"/"string"/"bool"/"array"）
-//      · 严格类型判等：类型不同即 false（1 != 1.0、null != false）
-//      · ValueKind 编号迁移：NULL=0 打头，ARR=5 在最后（与 VM 完全一致）
+//  ▌当前能力（P0 / P1 / P2 批次，各批次条目见下）：
+//      · 函数：自定义函数、块作用域、递归、闭包与开放上值、多返回值
+//      · 值：null / int / float / string / bool / 通用表 / 函数值
+//      · 通用表：{e1, e2, ...} / t[k] / t[k] = v / t.field，数组段与哈希段合一
+//      · 控制流：if / while / do-while / for 数值与 for-in / break N / continue N
+//      · 错误处理：try { } catch (e)；assert / error / exit
+//      · 模块：imp <库名>；原生库经 AeApi ABI 调用
 //
-//  ▌★ 本轮修复（P0 批次：语义错误与未定义行为）：
+//  ▌历史新增（值的基石批次）：
+//      · null 字面量：a = null        （TK_NULL，编译为 LOAD_CONST 常量池 NULL 项）
+//      · type(x) 内置函数 → 返回类型名字符串
+//        （"null"/"int"/"float"/"string"/"bool"/"table"/"func"）
+//      · 严格类型判等：类型不同即 false（如 null != false）；
+//        但 int 与 float 之间【运行时报错】，见下方语义规范
+//      · ValueKind 编号：NULL=0 打头，TABLE=5、FUNC=6（与 VM 完全一致）
+//
+//  ▌★ 历史修复（P0 批次：语义错误与未定义行为）：
 //      · P0-1 块作用域：SymbolTable 改为作用域栈，每个 { } / if / while 体
 //        独立作用域。此前 allocLocal 对同名变量永远复用同一槽位，
 //        `local x = 1; if (true) { local x = 99 }` 会把外层 x 改成 99，
@@ -99,7 +107,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
-#include <memory>
 #include "ae_libhost.h"      // ★ 原生库加载（aec 只用它读导出表做编译期检查）
 #include "ae_diag.h"         // ★ 诊断系统（错误码 + 源码摘录 + 波浪线）
 #include "ae_console.h"     // ★ 控制台中文：绕开代码页
