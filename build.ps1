@@ -1,24 +1,16 @@
 ﻿# =============================================================================
 #  Ae 工具链一键构建（Windows / PowerShell 5.1+）
 # -----------------------------------------------------------------------------
-#  会编译 7 个东西：
-#     工具（可执行）  Apt\aec.cpp       → aec.exe   编译器
+#  会编译 3 个可执行文件：
+#                     Apt\aec.cpp       → aec.exe   编译器
 #                     Apt\ae.cpp        → ae.exe    虚拟机
 #                     Apt\aed.cpp       → aed.exe   反汇编器
-#     原生库（DLL）   Apt\lib\io.cpp    → lib\io.dll
-#                     Apt\lib\os.cpp    → lib\os.dll
-#                     Apt\lib\path.cpp  → lib\path.dll
-#                     Apt\lib\ui.cpp    → lib\ui.dll    （用 Windows 的 GDI+，多链 4 个系统库）
-#     Apt\lib\args.m 与 json.m 是 Ae 写的模块，不需要编译，拷到 lib\ 就能 imp。
 #
-#  用法：
-#      powershell -ExecutionPolicy Bypass -File build.ps1
-#      powershell -ExecutionPolicy Bypass -File build.ps1 -Clean
-#      powershell -ExecutionPolicy Bypass -File build.ps1 -OutDir D:\tmp\ae
-#      powershell -ExecutionPolicy Bypass -File build.ps1 -Compiler g++
+#  标准库 io / os / path 是【头文件版】，在 Apt\ae_builtin.h 里被 #include 进
+#  aec 与 ae，一起编进可执行文件 —— 不再需要任何 dll / so。
+#  ui 库（Windows GDI+）已移除。
+#  Apt\lib\args.m 与 json.m 是 Ae 自己写的模块，不用编译，拷到 lib\ 即可 imp。
 #
-#  默认就地构建到 Apt\ 与 Apt\lib\ —— Test\run.ps1 就是从那里找工具的。
-# =============================================================================
 param(
   [string]$OutDir   = '',     # 空 = 就地（Apt\ + Apt\lib\）
   [string]$Compiler = '',     # 空 = 自动挑 clang++ / g++ / cl
@@ -65,7 +57,6 @@ if ($OutDir) {
 New-Item -ItemType Directory -Force -Path $outTools, $outLib | Out-Null
 if ($Clean) {
     Get-ChildItem $outTools -Filter '*.exe' -ErrorAction SilentlyContinue | Remove-Item -Force
-    Get-ChildItem $outLib   -Filter '*.dll' -ErrorAction SilentlyContinue | Remove-Item -Force
 }
 
 Write-Host ("编译器: {0}" -f $cc.exe) -ForegroundColor Cyan
@@ -107,16 +98,6 @@ Build-One 'EXE' (Join-Path $apt 'aec.cpp') (Join-Path $outTools 'aec.exe') @()
 Build-One 'EXE' (Join-Path $apt 'ae.cpp')  (Join-Path $outTools 'ae.exe')  @()
 Build-One 'EXE' (Join-Path $apt 'aed.cpp') (Join-Path $outTools 'aed.exe') @()
 
-# ── 原生库（ui 需要 GDI+，多链 user32/gdi32/gdiplus/winmm）──────────────────
-Build-One 'DLL' (Join-Path $lib 'io.cpp')   (Join-Path $outLib 'io.dll')   @()
-Build-One 'DLL' (Join-Path $lib 'os.cpp')   (Join-Path $outLib 'os.dll')   @()
-Build-One 'DLL' (Join-Path $lib 'path.cpp') (Join-Path $outLib 'path.dll') @()
-if ($msvc) {
-    Build-One 'DLL' (Join-Path $lib 'ui.cpp') (Join-Path $outLib 'ui.dll') @('user32.lib','gdi32.lib','gdiplus.lib','winmm.lib')
-} else {
-    Build-One 'DLL' (Join-Path $lib 'ui.cpp') (Join-Path $outLib 'ui.dll') @('-luser32','-lgdi32','-lgdiplus','-lwinmm')
-}
-
 # ── Ae 模块：不用编译，拷到 lib\ ────────────────────────────────────────────
 foreach ($m in @('args.m', 'json.m')) {
     $src = Join-Path $lib $m
@@ -126,9 +107,6 @@ foreach ($m in @('args.m', 'json.m')) {
         if ((Resolve-Path $src).Path -ne $dst) { Copy-Item $src $dst -Force }
     }
 }
-
-# ── 清掉 clang 生成的导入库（.lib）：Ae 是运行时 LoadLibrary 找 DLL，用不到 ──
-Get-ChildItem $outLib -Filter '*.lib' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
 # ── 结果 ────────────────────────────────────────────────────────────────────
 Write-Host ''

@@ -1,14 +1,15 @@
 # Ae
 
-**Ae** 是一门小巧但完整的动态脚本语言：语法干净、编译成字节码、自带系统库和窗口/图形库（`ui`）。
+**Ae 2.0.1b** —— 一门小巧但完整的动态脚本语言：语法干净、编译成字节码、自带系统库（`io` `os` `path`）。
 
-它按“函数是一等公民”来设计：闭包、传递、匿名、回调，一样不少。
+三个标准库是**头文件实现**，编译期直接编进 `aec` / `ae`，不需要构建任何 `.so` / `.dll`。
+函数是一等公民，闭包、传递、匿名、回调一样不少。
 
 ```ae
 imp io
 
 func main() {
-    local cfg = {name = "Ae", ver = 1.7}
+    local cfg = {name = "Ae", ver = "2.0.1b"}
     prln("你好，" + cfg.name + " " + cfg.ver)
 
     local next = makeCounter(10)
@@ -22,7 +23,7 @@ func main() {
 
 func makeCounter(start) {
     local n = start
-    return func() { n += 1  return n }     // 闭包
+    return func() { n += 1  return n }
 }
 ```
 
@@ -30,70 +31,71 @@ func makeCounter(start) {
 $ aec hello.ae
 [+] 编译成功: hello.aeo（1746 字节）
 $ ae hello.aeo
-你好，Ae 1.7
+你好，Ae 2.0.1b
 计数: 11 12 13
 和 = 14 | 个数 = 5
 ```
 
 ---
 
-## 特性一览
+## 特性
 
 **语言**
 
 - 20 个关键字：`if else while do imp try catch for in break continue return local func and or not true false null`
 - 6 种类型：`int`（64 位）`float` `bool` `null` `string` `table`，加上一等公民的 `func`
-- **闭包**（`func(x) { … }` 捕获外层变量）、`try/catch`、多返回值、复合赋值 `+= -= *= /=`
-- 表（table）同时当数组和字典用：`{1, 2, name = "x"}`；空表是假值，`==` 比身份、`equal()` 比内容
-- 模块：`.m` 文件用 `imp` 导入，写法和普通 Ae 代码一样
+- 闭包、多返回值、复合赋值 `+= -= *= /=`
+- 函数支持默认参数、变参，具名函数也能当值传递
+- 字符串插值 `"v=${x}"`
+- 表同时当数组和字典用：`{1, 2, name = "x"}`；`==` 比身份、`equal()` 比内容
+- `.m` 模块用 `imp` 导入，写法和普通 Ae 代码一样，顶层变量也可导出
 - 顶层语句先执行，然后自动调用 `main()`（如果有）
 
 **工具链**
 
-- 只有三个可执行文件：`aec` 编译器、`ae` 虚拟机、`aed` 反汇编器
-- 零第三方依赖，只要 C++17 标准库；编译产物是单个 `.aeo` 字节码文件
-- 带错误码的诊断：源码摘录 + `^` 光标 + `help` + 运行期调用栈（`E0xxx` 工具链 / `E1xxx` 编译期 / `E2xxx` 运行期）
+- 三个可执行文件：`aec` 编译器、`ae` 虚拟机、`aed` 反汇编器（跑脚本只要 `aec` + `ae`）
+- 零第三方依赖，只要 C++17 标准库
+- 编译产物是单个 `.aeo` 字节码文件（当前格式 `AeBc 1.8`）
+- 诊断带错误码：源码摘录 + `^` 光标 + `help` + 运行期调用栈（`E0xxx` 工具链 / `E1xxx` 编译期 / `E2xxx` 运行期）
 
 **库**
 
-- 原生库（C++ 写成 `.dll` / `.so`）：`io` 文件、`os` 环境与时间、`path` 路径、`ui` 窗口与图形（Windows / GDI+）
-- Ae 模块：`json`、`args`
-- 统一的失败约定：**预期失败**返回 `null`/`false` + `<库>.lastError()`；**程序性错误**抛带栈的运行错误
+- 原生库 `io`（文件）、`os`（环境与时间）、`path`（路径）—— 头文件版，随 `aec` / `ae` 一起编译
+- Ae 模块（`.m`，无需编译）：`json`、`args`、`math`
+- 统一失败约定：**预期失败**返回 `null`/`false` + `<库>.lastError()`；**程序性错误**抛带栈的运行错误
 
-**适合用来做**
+**定位**
 
-- 写小工具 / 批处理：一个 `.ae` 编译成一个 `.aeo`，有 `ae` 就能跑，装的东西只有三个可执行文件
-- 教编程：关键字少、报错清楚、中文友好（中文只进字符串，标识符仍是 ASCII，不引入歧义）
-- Windows 上的小桌面程序 / 画点东西：`ui` 能直接开窗口、画图形和文字、收鼠标键盘事件、定时器重绘
-- 不打算做的：面向对象体系
+- 写小工具 / 批处理：一个 `.ae` 编译成一个 `.aeo`，有 `ae` 就能跑
+- 教编程：关键字少、报错清楚
+- 不做：面向对象体系
 
 ---
 
 ## 目录结构
 
 ```
-Apt/               语言实现（源码都在这儿）
-├─ aec.cpp           编译器：词法/语法/类型检查 → AeBc 1.7 字节码
+Apt/               语言实现
+├─ aec.cpp           编译器：词法/语法/类型检查 → AeBc 1.8 字节码
 ├─ ae.cpp            虚拟机：加载 .aeo、执行、诊断与调用栈
 ├─ aed.cpp           反汇编器：把 .aeo 打成可读的指令清单
-├─ ae_console.h      Windows 控制台统一走 UTF-8（GBK 的 cmd 里中文不乱码）
+├─ ae_builtin.h      内置库登记表：把头文件库注册给 aec / ae
+├─ ae_console.h      Windows 控制台统一走 UTF-8
 ├─ ae_diag.h         诊断渲染：错误码 / 摘录 / 光标 / help / 栈
-├─ ae_native.h       原生库 ABI（当前 v4：脚本参数、读表、回调 Ae 函数）
-├─ ae_libhost.h      宿主侧加载器：找库的目录顺序与候选文件名
-├─ ae_path.h         路径的编码处理（Windows 上 argv 是 GBK、脚本里是 UTF-8）
-├─ lib/              标准库（4 个原生库 + 2 个 Ae 模块）
-│  ├─ io.cpp  os.cpp  path.cpp     跨平台原生库
-│  ├─ ui.cpp                       Windows 专用（GDI+），约 4200 行
-│  ├─ ae_libutil.h                 库共用工具：参数检查 / lastError
-│  ├─ args.m  json.m               用 Ae 自己写的模块（不用编译）
-│  └─ *.dll / *.so                 构建产物（放这里就能被 imp 找到）
+├─ ae_native.h       原生库 ABI（v4：脚本参数、读表、回调 Ae 函数）
+├─ ae_libhost.h      宿主侧加载器（可选：动态库扩展）
+├─ ae_path.h         路径的编码处理
+├─ lib/              标准库
+│  ├─ ae_lib_io.h  ae_lib_os.h  ae_lib_path.h   头文件版原生库
+│  ├─ ae_libutil.h                   库共用工具
+│  └─ args.m  json.m  math.m         用 Ae 自己写的模块
 Test/                回归测试
-├─ run.ps1           跑 cases/ 与 errors/（默认 74 个用例全绿）
-├─ cases/*.ae|*.out  正向用例：必须编译并成功运行，输出与 .out 一致
-├─ errors/*.ae|*.err 失败用例：必须失败，stderr 含 .err 里的文本
-├─ check_*.ps1       交互 / 跨程序自测：ui 事件、拖拽、鼠标、控制台中文、run()
-└─ ui_*.ae           ui 库的演示脚本（会开窗口，不属于 run.ps1 用例）
-build.ps1             Windows 一键构建（PowerShell）
+├─ run.sh / run.ps1  跑 cases/ 与 errors/（默认 73 个用例全绿）
+├─ cases/*.ae|*.out  正向用例
+├─ errors/*.ae|*.err 失败用例
+├─ check_run.ps1      跨程序自测：run() 的顺序 / 隔离 / 参数 / 退出码 / 错误传播
+└─ check_console.ps1  控制台中文自测
+build.ps1             Windows 一键构建
 build.sh              Linux / macOS 构建
 ```
 
@@ -101,61 +103,34 @@ build.sh              Linux / macOS 构建
 
 ## 构建
 
-需要 **C++17** 编译器（Windows 上推荐 `clang++`，也可以用 `g++` 或 MSVC 的 `cl`）。没有第三方依赖。
+需要 **C++17** 编译器，没有第三方依赖。
 
-### Windows：一键构建
+标准库 `io` / `os` / `path` 是头文件版（`Apt/lib/ae_lib_*.h`），由 `Apt/ae_builtin.h` 汇总后被
+`aec.cpp` 与 `ae.cpp` `#include`，一起编进可执行文件——构建产物只有可执行文件，没有 `.so` / `.dll`。
+
+### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-它会编译 **7 个东西**（3 个工具 + 4 个原生库），并把 `args.m`、`json.m` 拷到 `lib\`：
+参数：`-Clean`（先删旧的）、`-OutDir <目录>`、`-Compiler g++`、`-Quiet`。默认就地构建到 `Apt\`。
 
-| 源文件 | 产物 | 链接参数 |
-|---|---|---|
-| `aec.cpp` | `aec.exe` | — |
-| `ae.cpp` | `ae.exe` | — |
-| `aed.cpp` | `aed.exe` | — |
-| `lib\io.cpp` | `lib\io.dll` | — |
-| `lib\os.cpp` | `lib\os.dll` | — |
-| `lib\path.cpp` | `lib\path.dll` | — |
-| `lib\ui.cpp` | `lib\ui.dll` | `-luser32 -lgdi32 -lgdiplus -lwinmm` |
-
-脚本参数：
-
-```powershell
-build.ps1 -Clean                  # 先删旧的 exe/dll 再编
-build.ps1 -OutDir D:\tmp\ae       # 构建到别处（工具在 D:\tmp\ae，库在 D:\tmp\ae\lib）
-build.ps1 -Compiler g++           # 指定编译器（默认 clang++ → g++ → cl）
-build.ps1 -Quiet                  # 只报错，不打印编译器告警
-```
-
-默认**就地**构建到 `Apt\` 与 `Apt\lib\` —— `Test\run.ps1` 就是从这里取工具的。
-
-### Windows：手动敲（想知道每一步在干什么）
-
-在 `Apt` 目录下：
+手动：
 
 ```bat
 clang++ -std=c++17 -O2 -Wall aec.cpp -o aec.exe
 clang++ -std=c++17 -O2 -Wall ae.cpp  -o ae.exe
 clang++ -std=c++17 -O2 -Wall aed.cpp -o aed.exe
-
-cd lib
-clang++ -std=c++17 -O2 -Wall -shared io.cpp   -o io.dll
-clang++ -std=c++17 -O2 -Wall -shared os.cpp   -o os.dll
-clang++ -std=c++17 -O2 -Wall -shared path.cpp -o path.dll
-clang++ -std=c++17 -O2 -Wall -shared ui.cpp   -o ui.dll -luser32 -lgdi32 -lgdiplus -lwinmm
 ```
-
-编译时出现的两条告警是历史遗留（`io.cpp` 的 `&&` 优先级提示、`os.cpp` 里一个未用到的静态函数），不影响功能。
 
 ### Linux / macOS
 
 ```bash
-./build.sh                      # 三件套 + libio.so / libos.so / libpath.so（macOS 上是 .dylib）
+./build.sh                      # 三件套（--no-aed 只编 aec + ae）
 OUT=/tmp/ae ./build.sh          # 构建到别处
 CXX=clang++ ./build.sh          # 换编译器
+./build.sh --clean
 ```
 
 手动等价于：
@@ -164,72 +139,41 @@ CXX=clang++ ./build.sh          # 换编译器
 g++ -std=c++17 -O2 -Wall aec.cpp -o aec
 g++ -std=c++17 -O2 -Wall ae.cpp  -o ae
 g++ -std=c++17 -O2 -Wall aed.cpp -o aed
-g++ -std=c++17 -O2 -Wall -shared -fPIC lib/io.cpp   -o lib/libio.so
-g++ -std=c++17 -O2 -Wall -shared -fPIC lib/os.cpp   -o lib/libos.so
-g++ -std=c++17 -O2 -Wall -shared -fPIC lib/path.cpp -o lib/libpath.so
 ```
 
-> `ui` 用的是 Windows 的 GDI+，**只能在 Windows 上编译**；Linux/macOS 上其余部分都能跑。
-> `args.m`、`json.m` 是 Ae 写的模块，不需要编译，拷到 `lib/` 即可。
->
-> 说明：本项目主要在 Windows 上开发和测试，Linux / macOS 的代码路径已经写好（`#ifdef` 分支与 `build.sh`），但还没有 CI 覆盖；遇到问题按“手动命令”逐条敲一遍通常就能定位。
+本版主要在 Linux 上验证。Windows 的 `#ifdef` 分支与 `build.ps1` 仍在，但未做 CI 覆盖。
 
-### 库放哪：`imp` 怎么找库
+### 模块查找
 
-`ae` 按顺序在这些目录里找（`<exe>` = 可执行文件所在目录，`<script>` = 脚本所在目录）：
+内置库（`io` `os` `path`）在可执行文件里，`imp io` 直接用。
+
+`.m` 模块按顺序找（`<exe>` = 可执行文件所在目录，`<script>` = 脚本所在目录）：
 
 ```
 <exe>/lib  →  <exe>  →  <script>/lib  →  <script>  →  ./lib  →  ./  →  $AE_LIB_PATH
 ```
 
-每个目录里依次尝试这些文件名：
-
-- Windows：`<名字>.dll`、`lib<名字>.dll`（再找 `<名字>.m`）
-- Linux：`lib<名字>.so`、`<名字>.so`；macOS：`lib<名字>.dylib`、`<名字>.dylib`（也都再找 `<名字>.m`）
-
-所以最省事的做法就是**把 dll 放在 exe 旁边的 `lib\`**；想放到别处就设环境变量 `AE_LIB_PATH`。
-找不到库时会报 `E1014`，并把试过的路径全列出来。
-
-### 只改了一个库 / 只改了一个工具
-
-不用全量重编，直接编需要的那一个就行：
-
-```powershell
-cd Apt\lib
-clang++ -std=c++17 -O2 -Wall -shared ui.cpp -o ui.dll -luser32 -lgdi32 -lgdiplus -lwinmm
-```
-
-（`ui` 的图形改动只影响 `ui.dll`，`ae.exe` 不用重编。）
-
-### 构建/使用中的几个坑
-
-| 现象 | 原因与处理 |
-|---|---|
-| `.ps1` 脚本报奇怪的语法错误（中文全变成 `缂栬瘧` 之类） | 脚本被存成了 **不带 BOM 的 UTF-8**，PowerShell 5.1 按 GBK 读。存回 **UTF-8 with BOM** 即可（文件头三字节应是 `EF BB BF`） |
-| 构建脚本里 `clang++ ... 2>&1 \| ...` 之后整个脚本停住 | PS 5.1 把原生程序的 stderr 当 ErrorRecord，配合 `$ErrorActionPreference='Stop'` 会把一条普通告警变成终止性错误。`build.ps1` 用 `cmd /c ... > 日志 2>&1` 绕开了这个问题 |
-| 链接时报 `cannot open output file ...dll: Permission denied` | 那个 dll 正被某个 `ae.exe` 进程占用，关掉窗口/进程再编（或先删掉它） |
-| `imp ui` 报找不到库 | `ui.dll` 不在 `ae.exe` 旁边的 `lib\` 里；确认构建产物位置，或设 `AE_LIB_PATH` |
-| 改了 `ae_native.h` 的 ABI 后老库加载失败 | 原生库要报 `abiVersion`，对不上会 `E1015`；重新编译对应的库 |
+每个目录依次尝试 `<名字>.m`（Windows 上还看 `<名字>.dll`、`lib<名字>.dll`；Linux `lib<名字>.so`、`<名字>.so`；macOS `lib<名字>.dylib`、`<名字>.dylib`）。
+找不到时（E1014）会列出试过的全部路径。
 
 ---
 
-## 三件套用法
+## 工具用法
 
 ```console
 $ aec -h
-Ae 编译器 (aec)
+Ae 编译器 (aec) 2.0.1b
 用法: aec <源文件.ae> [-o 输出.aeo] [-q]
   -o <文件>        指定输出的字节码文件名（默认同名 .aeo）
   -q, --quiet      成功时不打印提示（只出错才输出）
   -h, --help       显示本帮助
-输出字节码格式: AeBc 1.7
+输出字节码格式: AeBc 1.8
 退出码: 0 成功  1 编译失败
-提示: 用法里第二个位置参数也可以直接写输出文件（aec a.ae b.aeo）
 ```
 
 ```console
 $ ae -h
-Ae 虚拟机 (ae) 1.1
+Ae 虚拟机 (ae) 2.0.1b
 用法: ae [--max-depth N] <file.aeo> [脚本参数...]
   --max-depth N, -m N   调用深度上限（默认 10000）
   -h, --help            显示帮助
@@ -240,19 +184,16 @@ Ae 虚拟机 (ae) 1.1
 
 ```console
 $ aed -h
-Ae 反汇编器 (aed)
+Ae 反汇编器 (aed) 2.0.1b
 用法: aed <字节码.aeo>
   把 .aeo 反汇编成人读的清单：头部信息 / 常量池 / 函数表 / 指令流 / 行号表
-  字节码用 aec 从 .ae 编译得到（aec hello.ae → hello.aeo）
 退出码: 0 成功  1 失败
 ```
 
-典型流程：
-
 ```console
-$ aec hello.ae            # 编译 → hello.aeo
-$ ae hello.aeo 参数1 参数2  # 运行，后面的参数给脚本
-$ aed hello.aeo           # 想看字节码长什么样
+$ aec hello.ae              # 编译 → hello.aeo
+$ ae hello.aeo 参数1 参数2   # 运行，后面的参数给脚本
+$ aed hello.aeo             # 看字节码
 ```
 
 ---
@@ -263,24 +204,16 @@ $ aed hello.aeo           # 想看字节码长什么样
 |---|---|
 | 注释 | `// 行注释`、`/* 块注释 */`（不嵌套） |
 | 变量 | 赋值即创建全局：`x = 1`；函数里用 `local x = 1` |
-| 判断 / 循环 | `if (cond) { } else { }`、`while (c) { }`、`do { } while (c)`、`for i = 1, 5 { }`、`for i = 5, 1, -1 { }`、`for k, v in t { }` —— 条件必须带括号 |
-| 函数 | `func add(a, b) { return a + b }`；匿名函数 `func(x) { … }`；多返回值 `return 1, 2` + `local a, b = f()` |
-| 真值 | 假：`false` `0` `""` `{}` `null`，其余为真 |
-| 相等 | `==` 比身份（表/函数）/值（标量）；`equal(a, b)` 比表内容；**`1 == 1.0` 会报错**，要显式统一类型 |
-| 运算 | `+ - * / %`（`/` 是整数除法：`7 / 2` = `3`，`7.0 / 2` = `3.5`）、比较、`and or not`、位运算；除数为 0 一律报错 |
-| 字符串 | UTF-8，`len()` 按码点算；索引从 **1** 开始；`+` 拼接（数字也能直接拼） |
-| 表 | `{1, 2, name = "x"}`；数组段从 1 连续，`len()` 数数组段、`count()` 数全部键；键只能是 int / string / bool（float、表、null 作键会报错） |
-| 错误 | `try { } catch (e) { }`，`e` 里有 `code kind msg file line col stack`；`error()` / `assert()` / `exit(n)` |
-| 模块 | `imp mathx` → 找 `mathx.m`；模块里定义的 `func` 都能用 |
-| 标识符 | 只能用 ASCII 字母/数字/下划线 —— **中文只能写在字符串和注释里** |
-
-几个容易踩的点（写完第一版代码基本都会遇到）：
-
-- `1 == 1.0` → `E2001 不能直接比较 int 与 float`；写 `float(x)` 或 `1.0`。
-- 具名函数**不能当值传递**（`apply(dbl, 3)` 会报未声明变量）；要传就用 `func(x) { return dbl(x) }` 包一层，或直接写匿名函数。
-- `func(x) { … }` 这种匿名函数只能写在**函数体里面**，顶层不行。
-- 索引、`substr` 起点都从 1 开始。
-- 库函数的**参数个数**是编译期检查的（`E1011`），参数类型是运行期检查的（`E2009`）。
+| 判断 / 循环 | `if` `else` `while` `do-while`、`for i = 1, 5 { }`、`for k, v in t { }`；条件必须带括号 |
+| 函数 | `func add(a, b) { return a + b }`、`func f(a, b = 2)`、`func f(a, rest...)`；具名函数可当值 |
+| 真值 | 假：`false` `0` `""` `{}` `null` |
+| 相等 | `==` 比身份（表/函数/字符串）/值（标量）；`equal(a, b)` 比内容 |
+| 运算 | `+ - * / %`、比较、`and or not`、位运算、`**`；`/` 对整数是整除 |
+| 字符串 | UTF-8，`len()` 按码点；索引从 1 开始；`+` 拼接；插值 `"v=${x}"`（单引号不插值） |
+| 表 | `{1, 2, name = "x"}`；`len()` 数数组段、`count()` 数全部键；键只能是 int / string / bool |
+| 错误 | `try { } catch (e) { }`，`e` 含 `code kind msg file line col stack` |
+| 模块 | `imp mathx` → 找 `mathx.m`；`func` 与顶层变量都能用，`_` 开头不导出 |
+| 标识符 | ASCII 字母/数字/下划线 |
 
 ---
 
@@ -288,114 +221,101 @@ $ aed hello.aeo           # 想看字节码长什么样
 
 | 库 | 形式 | 内容 | 失败方式 |
 |---|---|---|---|
-| `io` | 原生 | 读/写文件、逐行读、目录、文件句柄、字节 | `null`/`false` + `io.lastError()` |
-| `os` | 原生 | 环境变量、工作目录、时间、随机、平台/PID/主机名、命令行参数 | `null`/`false` + `os.lastError()` |
-| `path` | 原生 | 纯字符串路径运算（统一用 `/`，`toNative()` 转回 `\`） | 基本不失败 |
-| `ui` | 原生 | 窗口、消息循环、图形（矩形/圆/路径/渐变/虚线）、文字、图片、画布、组、事件、定时器、脏矩形重绘 | 建对象失败 → `null` + `ui.lastError()`；参数/取值错 → 抛 `E2009` |
-| `json` | Ae 模块 | `decode` `decodeFile` / `encode` `encodePretty` `encodeFile` | 解析失败直接抛 `E2008` |
-| `args` | Ae 模块 | 命令行参数解析（`parse` / `parseOrExit`，另有 `usage` `intOr` `floatOr`） | 用法错误可自动打印帮助并 `exit(3)` |
+| `io` | 内置（头文件） | 读/写文件、逐行读、目录、文件句柄、字节 | `null`/`false` + `io.lastError()` |
+| `os` | 内置（头文件） | 环境变量、工作目录、时间、随机、平台/PID/主机名、命令行参数 | `null`/`false` + `os.lastError()` |
+| `path` | 内置（头文件） | 路径运算（统一用 `/`，`toNative()` 转回 `\`） | 基本不失败 |
+| `json` | `.m` 模块 | `decode` `decodeFile` / `encode` `encodePretty` `encodeFile` | 解析失败抛 `E2008` |
+| `args` | `.m` 模块 | 命令行参数解析（`parse` / `parseOrExit`、`usage` `intOr` `floatOr`） | 用法错误打印帮助并 `exit(3)` |
+| `math` | `.m` 模块 | 69 个数学函数：三角 / 双曲 / 指数对数 / 幂 / 取整 / 组合 / 统计 / 随机 | 定义域错误返回 `nan`，不抛错 |
 
-内置函数（不用 `imp`，共 36 个）：
+前三个内置，`imp io` 不需要任何外部文件。后三个是 `.m` 模块，放在 exe 旁的 `lib/` 或 `AE_LIB_PATH` 指到的目录里。
+
+### math/json/args
+
+用 Ae 自己写的（非 C++），417 行、69 个对外函数。
+- 具体实现与使用方式请看官网
+
+### 内置函数（不用 `imp`，36 个）
 
 | 分类 | 函数 |
 |---|---|
 | 输入输出 | `pr` `prln` `inp` |
 | 类型与转换 | `len` `str` `int` `float` `type` |
 | 错误与控制 | `assert` `error` `exit` `raise` |
-| 子程序 | `run`（在一个程序里跑另一个 .aeo，跑完再回来） |
+| 子程序 | `run`（跑另一个 .aeo，跑完再回来） |
 | 字符串 | `substr` `ord` `chr` `find` `upper` `lower` `trim` `replace` `split` `join` `repeat` `format` |
 | 表 | `delete` `insert` `pop` `append` `count` `copy` `deepcopy` `equal` |
 | 内存回收 | `weak` `collect` `gcstats` |
 
-**内存回收**：表与闭包由 GC 统一管理，引用环（表环、递归闭包、二者混合）都会被回收。
+表与闭包由 GC 统一管理，引用环（表环、递归闭包、混合）都会被回收。
+`weak(t)` 把表变成弱值表，值不参与标记，条目只在别处还有强引用时保留；`weak(t, "n")` 取消。
+`collect()` 同步完成一轮完整收集，返回回收数。`gcstats()` 返回统计表。
 
-- `weak(t)` 把表变成**弱值表**：它的值不参与标记，条目只在「值在别处还有强引用」时保留。适合缓存、反向索引这类"登记过不代表要一直占着内存"的容器。`weak(t, "n")` 取消。
-- `collect()` 立刻同步完成一轮完整收集，返回本轮回收的对象数。
-- `gcstats()` 返回统计表：`collections` `minor` `major` `reclaimed` `young` `old` `steps` `barriers` `rescans` `remembered` `threshold`。
-
-```ae
-local cache = {}
-weak(cache)
-cache["user"] = loadUser()      // 别处还拿着它 → 条目保留
-collect()                        // 别处都放开了 → 条目自动消失
-```
-
-`args.m` / `json.m` 本身就是写模块的范例，可以直接当参考。
+`args.m` / `json.m` 本身就是写模块的范例。
 
 ---
 
 ## 测试
 
-```powershell
+```bash
 cd Test
-powershell -ExecutionPolicy Bypass -File run.ps1              # 全部
-powershell -ExecutionPolicy Bypass -File run.ps1 -Filter p13  # 只跑名字含 p13 的
+./run.sh                 # 全部
+./run.sh -Filter p13     # 只跑名字含 p13 的
 ```
 
-约定：
+Windows 用 `powershell -ExecutionPolicy Bypass -File run.ps1`（参数同）。
 
-- `cases/<名字>.ae` + `cases/<名字>.out`：必须**编译并成功运行**，stdout 与 `.out` 完全一致。
-- `errors/<名字>.ae` + `errors/<名字>.err`：必须**失败**（编译期或运行期都行），stderr 里要包含 `.err` 的文本。
-- 加用例就是放一对文件进去，不用注册。当前规模：37 个正向 + 37 个失败 = **74 个用例**。
+- `cases/<名字>.ae` + `.out`：必须编译并成功运行，stdout 与 `.out` 一致
+- `errors/<名字>.ae` + `.err`：必须失败，stderr 含 `.err` 的文本
+- 加用例就是放一对文件进去，不用注册。当前规模：35 正向 + 38 失败 = **73 个用例**
 
-交互类的东西（窗口、事件、拖拽、控制台中文）和跨程序的 `run()` 用单独的脚本测：
+跨程序 `run()` 与控制台中文有单独脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File check_events.ps1     # 点击/移动/进出/键盘/关窗回调
-powershell -ExecutionPolicy Bypass -File check_drag.ps1       # 标题栏拖动，且拖动期间动画不停
-powershell -ExecutionPolicy Bypass -File check_mouse.ps1      # 命中测试、鼠标形状、帧率不掉
-powershell -ExecutionPolicy Bypass -File check_console.ps1    # GBK 控制台里的中文输出
-powershell -ExecutionPolicy Bypass -File check_run.ps1        # run() 的跨程序行为：顺序 / 隔离 / 参数 / 退出码 / 错误传播
+powershell -ExecutionPolicy Bypass -File check_run.ps1
+powershell -ExecutionPolicy Bypass -File check_console.ps1
 ```
 
-这几个脚本会**真的创建窗口并投递鼠标/键盘消息**（屏幕上会闪一下窗口），需要有桌面会话；无头环境里跑不了。
-
-> `run.ps1` 跑的是 `Apt/` 里的工具，所以**改完 `.cpp` 要先构建**，否则测的还是旧版本。
+测试跑的是 `Apt/` 里的工具，改完源码要先构建。
 
 ---
 
 ## 字节码与反汇编
 
-`.aeo` 文件开头是 `AeBc` 魔数 + 主/次版本号（当前 **1.7**，闭包版本），后面是常量池、函数表、指令流和行号表。
-`aed` 能把它们打出来：
+`.aeo` 开头是 `AeBc` 魔数 + 主/次版本号（当前 **1.8**），后面是常量池、函数表、指令流和行号表。
 
 ```console
 $ aed hello.aeo
 ; ╔══════════════════════════════════════════════════════════╗
 ; ║  Ae Bytecode Disassembly  (hello.aeo)
 ; ╠══════════════════════════════════════════════════════════╣
-; ║  Magic: AeBc  Version: 1.7
+; ║  Magic: AeBc  Version: 1.8
 ; ╚══════════════════════════════════════════════════════════╝
 
 ; ── Constant Pool (16 entries) ───────────────
   #  0  utf8   "Ae"
   #  1  utf8   "name"
-  #  2  double 1.7
-  #  3  utf8   "ver"
-  #  4  utf8   "你好，"
   ...
 ```
 
-虚拟机在加载时会校验魔数、版本、常量池下标和函数体范围，坏文件报 `E2005`（不会拿着坏字节码乱跑）。
+加载时校验魔数、版本、常量池下标和函数体范围，坏文件报 `E2005`。
 
 ---
 
 ## 文档与官网
 
 - 官网：<https://aelanguage.github.io/>
-- 站点文档分三大块：
-  **教学文档**（12 章，从“把 Ae 跑起来”到综合练习）、
-  **库与函数**（12 章，每个函数都有签名 + 说明 + 小示例）、
-  **报错**（5 章：怎么读一条报错 / 编译期 E1xxx / 运行期 E2xxx / 库的报错与 lastError / 处理与调试的套路）。
-- 文档里的每个示例都真编译、真运行过（示例脚本与官网源码放在一起维护）。
+- 站点文档分三块：**教学文档**（12 章）、**库与函数**（12 章，每个函数有签名 + 说明 + 示例）、**报错**（5 章：编译期 E1xxx / 运行期 E2xxx / 库的报错与 lastError / 调试套路）
+- 文档里的每个示例都真编译、真运行过
 
-## 计划?
+## 计划
 
-- [ ] **VM引入JIT** (长远计划)
-- [ ] **AOT编译器** (长远计划)
-- [ ] **REPL** (逐步推进中, 下个版本就能见面)
-- ~~OOP(遗弃)~~
-- [ ] **包管理** (长远计划, 需要生态, 现阶段显然不现实=( )
+- [ ] VM 引入 JIT（长远）
+- [ ] AOT 编译器（长远）
+- [ ] REPL（逐步推进中）
+- [ ] 包管理（长远，需要生态）
+- ~~OOP（遗弃）~~
 
 ## 许可证
+
 <LICENSE>
