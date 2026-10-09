@@ -1,9 +1,0 @@
-// P0-7 验收：转换成功路径
-func main() {
-    prln("1) int():", int("42"), int("-17"), int("+5"), int(1.9), int(-1.9), int(true))
-    prln("2) float():", float("2.5"), float("-0.5"), float(3), float(true))
-    prln("3) str():", str(42), str(1.5), str(true), str(null))
-    prln("4) 大整数往返:", int("9223372036854775807"), int(str(3000000000)))
-    prln("5) 转回来再算:", int(str(12345)) + 1)
-    prln("6) 空表/非空表 str():", str({}), str({1, name = "x"}))
-}

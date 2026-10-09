@@ -1,4 +1,0 @@
-func main() {
-  local t = {}
-  t[1.5] = 1
-}

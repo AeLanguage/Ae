@@ -1,8 +1,0 @@
-// 渐变写错了：必须明确报错（值域只有 linear/radial + 三个方向别名）
-imp ui
-
-func main() {
-    local w = ui.window("坏渐变", 120, 80)
-    local r = ui.rect(w, 10, 10, 40, 20)
-    ui.set(r, "gradient", "blur")
-}

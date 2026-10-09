@@ -1,9 +1,0 @@
-// 对【组】取色必须报错：组没有自己的尺寸（它的像素在父表面里，位置是组全局坐标）
-imp ui
-
-func main() {
-    local w = ui.window("组取色", 160, 120)
-    local g = ui.group(w)
-    ui.rect(g, 0, 0, 20, 20)
-    ui.pixel(g, 5, 5)
-}

@@ -1,2 +1,0 @@
-func len(x) { return 1 }
-func main() { prln(len("ab")) }

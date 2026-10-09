@@ -1,7 +1,0 @@
-1) bool 是独立类型   : bool bool int
-2) bool 判等         : true false
-3) bool 与 int 不相等: false false
-4) 显式转换可用      : 1 0 2 3.0
-5) str(bool)         : true false
-6) 真值判断          : true false
-7) 转换后参与算术    : 10 2

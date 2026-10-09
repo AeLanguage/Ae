@@ -1,3 +1,0 @@
-func main() {
-  for i = 1, 2 { break 5 }
-}

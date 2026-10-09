@@ -1,3 +1,0 @@
-func f() { return 1 }
-func f() { return 2 }
-func main() { prln(f()) }

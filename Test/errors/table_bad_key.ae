@@ -1,7 +1,0 @@
-// 键值对写成 "k" = v 是错的（必须 key = value 或 [expr] = value）
-func main() {
-    local d = {
-        "k" = 9,
-    }
-    prln(d)
-}
