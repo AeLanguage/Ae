@@ -1,35 +1,32 @@
-// =============================================================================
-//  json —— Ae 的 JSON 库（★ 用 Ae 自己写，不是 C++）
-// -----------------------------------------------------------------------------
-//  用法：
-//      imp json
-//      local cfg = json.decode(readFile("cfg.json"))
-//      prln(cfg.name)
-//      writeFile("out.json", json.encodePretty(cfg, 2))
+// json —— Ae 的 JSON 库（ 用 Ae 自己写，不是 C++）
+// 用法：
+// imp json
+// local cfg = json.decode(readFile("cfg.json"))
+// prln(cfg.name)
+// writeFile("out.json", json.encodePretty(cfg, 2))
 //
-//  导出函数（不带 _ 前缀的才会导出）：
-//      decode(text)             → 值 | 抛错(E2008)
-//      decodeFile(path)         → 值 | 抛错
-//      encode(v)                → 紧凑 JSON 字符串
-//      encodePretty(v)          → 2 空格缩进的可读 JSON
-//      encodePrettyN(v, 缩进)    → 自定义缩进（Ae 没有默认参数，所以拆成两个）
-//      encodeFile(path, v)      → bool | 抛错
+// 导出函数（不带 _ 前缀的才会导出）：
+// decode(text) → 值 | 抛错(E2008)
+// decodeFile(path) → 值 | 抛错
+// encode(v) → 紧凑 JSON 字符串
+// encodePretty(v) → 2 空格缩进的可读 JSON
+// encodePrettyN(v, 缩进) → 自定义缩进（Ae 没有默认参数，所以拆成两个）
+// encodeFile(path, v) → bool | 抛错
 //
-//  类型映射：
-//      JSON null/bool/number/string  ↔  Ae null/bool/int|float/string
-//      JSON array  ↔ Ae 表【数组段】（判定：count == len，即连续无空洞）
-//      JSON object ↔ Ae 表【哈希段】（键统一转成字符串）
-//      数字：带小数点或 e/E 的解析为 float，否则 int；编码时 float 用最短往返表示
+// 类型映射：
+// JSON null/bool/number/string ↔ Ae null/bool/int|float/string
+// JSON array ↔ Ae 表数组段（判定：count == len，即连续无空洞）
+// JSON object ↔ Ae 表哈希段（键统一转成字符串）
+// 数字：带小数点或 e/E 的解析为 float，否则 int；编码时 float 用最短往返表示
 //
-//  已知限制（写在这里而不是藏着）：
-//    · Ae 的表无法区分"值为 null"与"空洞"，所以 JSON 数组里出现 null 时
-//      解码会明确报错，而不是悄悄丢数据（要表达空位请用字符串 "null" 或改对象）
-//    · 非连续整数键的表（如 t = {1,2}; t[5] = 3）会被编码成对象而不是数组
-//    · 不产生/不接受 inf、nan（JSON 没有这两个值）
-// =============================================================================
+// 已知限制（写在这里而不是藏着）：
+// · Ae 的表无法区分"值为 null"与"空洞"，所以 JSON 数组里出现 null 时
+// 解码会明确报错，而不是悄悄丢数据（要表达空位请用字符串 "null" 或改对象）
+// · 非连续整数键的表（如 t = {1,2}; t[5] = 3）会被编码成对象而不是数组
+// · 不产生/不接受 inf、nan（JSON 没有这两个值）
 imp io
 
-// ── 编码 ────────────────────────────────────────────────────────────────────
+// 编码
 
 func encode(v) { return _enc(v, 1, "  ", false) }
 
@@ -135,7 +132,7 @@ func _hex4(code) {
     return s
 }
 
-// ── 解码 ────────────────────────────────────────────────────────────────────
+// 解码
 
 func decode(text) {
     if (type(text) != "string") { error("json.decode 需要字符串") }

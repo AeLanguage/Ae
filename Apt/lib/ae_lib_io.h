@@ -1,13 +1,10 @@
-// =============================================================================
-//  io   —— 文件读写（内置库，头文件版）
-// -----------------------------------------------------------------------------
-//  ★ 头文件版（header-only）：本文件不再编译成 .so / .dll，
-//    而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
-//    因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
+// io —— 文件读写（内置库，头文件版）
+// 头文件版（header-only）：本文件不再编译成 .so / .dll，
+// 而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
+// 因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
 //
-//    · 整个实现包在命名空间 ae_lib_io 里，避免与另外几个库重名
-//    · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
-// =============================================================================
+// · 整个实现包在命名空间 ae_lib_io 里，避免与另外几个库重名
+// · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
 #ifndef AE_LIB_IO_H
 #define AE_LIB_IO_H
 
@@ -37,9 +34,7 @@
   #define AE_FTELL64 ftello
 #endif
 
-// ---------------------------------------------------------------------------
-//  实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
-// ---------------------------------------------------------------------------
+// 实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
 namespace ae_lib_io {
 
 static std::string g_lastError;
@@ -48,12 +43,10 @@ static void fail(AeVM* /*vm*/, const std::string& why) {
     g_lastError = why;
 }
 
-// ---------------------------------------------------------------------------
-//  只读定位：先按原样找（绝对路径 / 相对 CWD 的 ../xxx 都照旧），
-//  找不到再去 <项目>/assets 这类资产目录里找 —— 于是脚本里可以只写文件名。
-//  ★ 写操作（writeFile / appendFile / open "w" "a" ...）不走这套：
-//    输出位置宁可用精确的，也不要凭空跑到别处去。
-// ---------------------------------------------------------------------------
+// 只读定位：先按原样找（绝对路径 / 相对 CWD 的 ../xxx 都照旧），
+// 找不到再去 <项目>/assets 这类资产目录里找 —— 于是脚本里可以只写文件名。
+// 写操作（writeFile / appendFile / open "w" "a" ...）不走这套：
+// 输出位置宁可用精确的，也不要凭空跑到别处去。
 static std::string resolveForRead(const std::string& path) {
     std::string real;
     return aepath::resolveAssetPath(path, &real) ? real : path;
@@ -78,9 +71,9 @@ static std::string resolveForRead(const std::string& path) {
   static std::string sysErr() {
       DWORD e = GetLastError();
       if (!e) return "系统调用失败";
-      // ★ 修：用 FormatMessageW 拿宽字符再转 UTF-8。以前用 FormatMessageA，
-      //   返回的是本机 ANSI 代码页（中文 Windows 上是 GBK）的文本，却被当成
-      //   UTF-8 字符串存进 lastError —— 打印出来是「ϵͳ�Ҳ���ָ�����ļ���」这种乱码。
+      // 修：用 FormatMessageW 拿宽字符再转 UTF-8。以前用 FormatMessageA，
+      // 返回的是本机 ANSI 代码页（中文 Windows 上是 GBK）的文本，却被当成
+      // UTF-8 字符串存进 lastError —— 打印出来是「ϵͳ�Ҳ���ָ�����ļ���」这种乱码。
       LPWSTR wbuf = nullptr;
       DWORD n = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
                                FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, e, 0, (LPWSTR)&wbuf, 0, nullptr);
@@ -125,9 +118,7 @@ static bool isDirectory(const std::string& path) {
 #endif
 }
 
-// ---------------------------------------------------------------------------
-//  参数检查助手
-// ---------------------------------------------------------------------------
+// 参数检查助手
 static const std::string& argStr(AeVM* vm, AeValue* argv, int argc, int i, const char* fn) {
     static const std::string kEmpty;
     if (i >= argc || !ae_is_str(argv[i])) {
@@ -144,9 +135,7 @@ static int64_t argInt(AeVM* vm, AeValue* argv, int argc, int i, const char* fn) 
     return argv[i].i;
 }
 
-// ---------------------------------------------------------------------------
-//  句柄表
-// ---------------------------------------------------------------------------
+// 句柄表
 namespace {
 struct FileHandle {
     FILE* fp = nullptr;
@@ -171,9 +160,7 @@ FileHandle* getHandle(AeVM* vm, int64_t h, const char* fn) {
 }
 }  // namespace
 
-// ---------------------------------------------------------------------------
-//  整文件 API
-// ---------------------------------------------------------------------------
+// 整文件 API
 static int nat_readFile(AeVM* vm, int argc, AeValue* argv) {
     const std::string& path = argStr(vm, argv, argc, 0, "readFile");
     FILE* fp = openFile(resolveForRead(path), AE_M_RB);
@@ -238,9 +225,7 @@ static int nat_readLines(AeVM* vm, int argc, AeValue* argv) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  元信息与目录
-// ---------------------------------------------------------------------------
+// 元信息与目录
 static int nat_exists(AeVM* vm, int argc, AeValue* argv) {
     ae_push_bool(vm, fileExists(resolveForRead(argStr(vm, argv, argc, 0, "exists"))) ? 1 : 0);
     return 1;
@@ -314,7 +299,7 @@ static int nat_mkdir(AeVM* vm, int argc, AeValue* argv) {
         if (p[i] == '/' || p[i] == '\\' || i + 1 == p.size()) {
             std::string d = cur;
             while (!d.empty() && (d.back() == '/' || d.back() == '\\')) d.pop_back();
-            if (d.empty() || d.size() == 2 && d[1] == ':') continue;
+            if (d.empty() || (d.size() == 2 && d[1] == ':')) continue;
             if (isDirectory(d)) continue;
 #ifdef _WIN32
             if (!CreateDirectoryW(toWide(d).c_str(), nullptr)) { ok = false; }
@@ -349,9 +334,14 @@ static int nat_copyFile(AeVM* vm, int argc, AeValue* argv) {
     ok = CopyFileW(toWide(a).c_str(), toWide(b).c_str(), FALSE) != 0;
 #else
     FILE* in = fopen(a.c_str(), "rb"); FILE* out = in ? fopen(b.c_str(), "wb") : nullptr;
-    if (in && out) { char buf[65536]; size_t n; ok = true;
-        while ((n = fread(buf, 1, sizeof(buf), in)) > 0) if (fwrite(buf, 1, n, out) != n) { ok = false; break; } }
-    if (in) fclose(in); if (out) fclose(out);
+    if (in && out) {
+        char buf[65536]; size_t n; ok = true;
+        while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+            if (fwrite(buf, 1, n, out) != n) { ok = false; break; }
+        }
+    }
+    if (in) fclose(in);
+    if (out) fclose(out);
 #endif
     if (!ok) fail(vm, "复制 " + a + " → " + b + " 失败: " + sysErr());
     ae_push_bool(vm, ok ? 1 : 0);
@@ -370,9 +360,7 @@ static int nat_rename(AeVM* vm, int argc, AeValue* argv) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  流式 API
-// ---------------------------------------------------------------------------
+// 流式 API
 static int nat_open(AeVM* vm, int argc, AeValue* argv) {
     const std::string& path = argStr(vm, argv, argc, 0, "open");
     const std::string& mode = argStr(vm, argv, argc, 1, "open");
@@ -474,9 +462,7 @@ static int nat_lastError(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  导出表
-// ---------------------------------------------------------------------------
+// 导出表
 static const AeNativeDef kExports[] = {
     // 整文件
     { "readFile",   1, 1, nat_readFile   },
@@ -512,10 +498,9 @@ static const AeNativeDef* io_getExports(int* count) {
     return kExports;
 }
 
-// ── 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）──────────────
+// 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）
 inline const AeNativeDef* getExports(int* count) { return io_getExports(count); }
 inline void setApi(const AeApi* api) { ae_abi::g_api = api; }
-
 
 } // namespace ae_lib_io
 

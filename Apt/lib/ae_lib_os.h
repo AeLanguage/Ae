@@ -1,13 +1,10 @@
-// =============================================================================
-//  os   —— 系统/环境/时间/随机（内置库，头文件版）
-// -----------------------------------------------------------------------------
-//  ★ 头文件版（header-only）：本文件不再编译成 .so / .dll，
-//    而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
-//    因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
+// os —— 系统/环境/时间/随机（内置库，头文件版）
+// 头文件版（header-only）：本文件不再编译成 .so / .dll，
+// 而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
+// 因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
 //
-//    · 整个实现包在命名空间 ae_lib_os 里，避免与另外几个库重名
-//    · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
-// =============================================================================
+// · 整个实现包在命名空间 ae_lib_os 里，避免与另外几个库重名
+// · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
 #ifndef AE_LIB_OS_H
 #define AE_LIB_OS_H
 
@@ -37,9 +34,7 @@
 extern char** environ;
 #endif
 
-// ---------------------------------------------------------------------------
-//  实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
-// ---------------------------------------------------------------------------
+// 实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
 namespace ae_lib_os {
 
 static std::string g_lastError;
@@ -48,7 +43,7 @@ static std::string sysErr() {
 #ifdef _WIN32
     DWORD e = GetLastError();
     if (!e) return "系统调用失败";
-    // ★ 修：FormatMessageW + 转 UTF-8（用 A 版拿到的是 GBK，存进 lastError 会变乱码）
+    // 修：FormatMessageW + 转 UTF-8（用 A 版拿到的是 GBK，存进 lastError 会变乱码）
     LPWSTR wbuf = nullptr;
     DWORD n = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
                              FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, e, 0, (LPWSTR)&wbuf, 0, nullptr);
@@ -102,14 +97,8 @@ static int64_t argInt(AeVM* vm, AeValue* argv, int argc, int i, const char* fn) 
     }
     return argv[i].i;
 }
-static std::string argOptStr(AeVM* vm, AeValue* argv, int argc, int i) {
-    if (i >= argc) return std::string();
-    return *(const std::string*)argv[i].p;
-}
 
-// ---------------------------------------------------------------------------
-//  命令行参数
-// ---------------------------------------------------------------------------
+// 命令行参数
 static int nat_args(AeVM* vm, int, AeValue*) {
     int n = ae_arg_count(vm);
     AeValue t = ae_new_table(vm);
@@ -127,9 +116,7 @@ static int nat_argCount(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  环境变量
-// ---------------------------------------------------------------------------
+// 环境变量
 static int nat_getEnv(AeVM* vm, int argc, AeValue* argv) {
     const std::string& name = argStr(vm, argv, argc, 0, "getEnv");
 #ifdef _WIN32
@@ -186,9 +173,7 @@ static int nat_env(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  工作目录与常用目录
-// ---------------------------------------------------------------------------
+// 工作目录与常用目录
 static int nat_cwd(AeVM* vm, int, AeValue*) {
 #ifdef _WIN32
     DWORD need = GetCurrentDirectoryW(0, nullptr);
@@ -241,9 +226,7 @@ static int nat_homeDir(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  时间
-// ---------------------------------------------------------------------------
+// 时间
 static int nat_time(AeVM* vm, int, AeValue*) {
     ae_push_int(vm, (int64_t)::time(nullptr));
     return 1;
@@ -281,9 +264,7 @@ static int nat_formatTime(AeVM* vm, int argc, AeValue* argv) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  随机数
-// ---------------------------------------------------------------------------
+// 随机数
 namespace {
 std::mt19937_64& rng() {
     static std::mt19937_64 g([] { std::random_device rd; return ((uint64_t)rd() << 32) ^ rd(); }());
@@ -313,9 +294,7 @@ static int nat_randomFloat(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  系统信息
-// ---------------------------------------------------------------------------
+// 系统信息
 static int nat_platform(AeVM* vm, int, AeValue*) {
 #if defined(_WIN32)
     ae_push_str(vm, "windows");
@@ -357,9 +336,7 @@ static int nat_lastError(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  导出表
-// ---------------------------------------------------------------------------
+// 导出表
 static const AeNativeDef kExports[] = {
     // 命令行
     { "args",        0, 0, nat_args        },
@@ -396,10 +373,9 @@ static const AeNativeDef* os_getExports(int* count) {
     return kExports;
 }
 
-// ── 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）──────────────
+// 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）
 inline const AeNativeDef* getExports(int* count) { return os_getExports(count); }
 inline void setApi(const AeApi* api) { ae_abi::g_api = api; }
-
 
 } // namespace ae_lib_os
 

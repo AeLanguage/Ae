@@ -1,13 +1,10 @@
-// =============================================================================
-//  ae_libutil.h —— 原生库共用的小工具（参数检查 / lastError / 平台转换）
-// -----------------------------------------------------------------------------
-//  每个库都是独立 DLL，所以这些 inline 函数各有一份副本、状态也各自独立
-//  （这正是我们想要的：io.lastError() 与 os.lastError() 互不干扰）。
+// ae_libutil.h —— 原生库共用的小工具（参数检查 / lastError / 平台转换）
+// 每个库都是独立 DLL，所以这些 inline 函数各有一份副本、状态也各自独立
+// （这正是我们想要的：io.lastError() 与 os.lastError() 互不干扰）。
 //
-//  约定（所有库统一）：
-//    · 预期失败 → aelib::fail("原因") + 返回 null/false，由 <库>.lastError() 查询
-//    · 程序性错误（参数类型/个数）→ aelib::raise(vm, "原因")，立刻成为运行错误
-// =============================================================================
+// 约定（所有库统一）：
+// · 预期失败 → aelib::fail("原因") + 返回 null/false，由 <库>.lastError() 查询
+// · 程序性错误（参数类型/个数）→ aelib::raise(vm, "原因")，立刻成为运行错误
 #ifndef AE_LIBUTIL_H
 #define AE_LIBUTIL_H
 
@@ -58,7 +55,7 @@ inline int64_t argInt(AeVM* vm, AeValue* argv, int argc, int i, const char* fn) 
     }
     return argv[i].i;
 }
-inline std::string argOptStr(AeVM* vm, AeValue* argv, int argc, int i) {
+inline std::string argOptStr(AeVM*, AeValue* argv, int argc, int i) {
     if (i >= argc) return std::string();
     const std::string* s = (const std::string*)argv[i].p;
     return s ? *s : std::string();
@@ -68,7 +65,7 @@ inline void wantArgs(AeVM* vm, size_t got, size_t need, const char* fn) {
         raise(vm, std::string(fn) + " 需要 " + std::to_string(need) + " 个参数，得到 " + std::to_string(got));
 }
 
-// ── 平台文本转换 ──
+// 平台文本转换
 #ifdef _WIN32
 inline std::string utf16ToUtf8(const std::wstring& w) {
     if (w.empty()) return std::string();

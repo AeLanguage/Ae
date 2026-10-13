@@ -1,13 +1,13 @@
 // math —— Ae 数学库（纯 Ae 实现，零 C++ 依赖）
-//   imp math  →  math.sqrt(2.0) / math.sin(math.pi() / 2) / math.round(3.14159, 2)
-// ★ 常量仍是函数（math.pi()），历史 API 保持兼容
-// ★ 定义域错误返回 nan 不抛错（能顺着算式传下去），溢出返回 inf；log(0) = -inf
-// ★ 内部一律先 float(x)：Ae 不允许 int/float 直接比较（E2001）
-// ★ double 精度：sqrt/cbrt/expm1 与 libm 逐位一致，其余 ≤5ulp；|x|>1e15 的三角不可信
+// imp math → math.sqrt(2.0) / math.sin(math.pi() / 2) / math.round(3.14159, 2)
+// 常量仍是函数（math.pi()），历史 API 保持兼容
+// 定义域错误返回 nan 不抛错（能顺着算式传下去），溢出返回 inf；log(0) = -inf
+// 内部一律先 float(x)：Ae 不允许 int/float 直接比较（E2001）
+// double 精度：sqrt/cbrt/expm1 与 libm 逐位一致，其余 ≤5ulp；|x|>1e15 的三角不可信
 
 imp os
 
-// ── 私有常量（模块顶层变量，_ 开头不导出）─────────────────────────────────
+// 私有常量（模块顶层变量，_ 开头不导出）
 _MAX = 1.7976931348623157e308
 _INF = _MAX * 10.0                    // 字面量写不出 inf，靠乘法溢出算出来
 _NAN = _INF - _INF                    // inf - inf = nan
@@ -27,7 +27,7 @@ _B53 = 9007199254740992.0             // 2^53：超过它本身就是整数
 _ULP = 0.00000000000000011102230246251565
 _EXP = 709.782712893384               // exp 溢出阈值
 
-// ── 私有工具 ──────────────────────────────────────────────────────────────
+// 私有工具
 func _n(v)  { return v != v }                       // isNaN
 func _ii(v) { return v > _MAX or v < 0.0 - _MAX }   // isInf
 func _ab(v) { return v < 0.0 ? 0.0 - v : v }        // fabs（只吃 float）
@@ -38,7 +38,7 @@ func _k2(k) {                                       // 2^k，k 为 int（可负�
     return r
 }
 
-// ── 常量 ──────────────────────────────────────────────────────────────────
+// 常量
 func pi()      { return _PI }
 func tau()     { return _TAU }
 func e()       { return _E }
@@ -53,7 +53,7 @@ func epsilon() { return 0.0000000000000002220446049250313 }
 func huge()    { return _INF }
 func nan()     { return _NAN }
 
-// ── 基本运算 ──────────────────────────────────────────────────────────────
+// 基本运算
 func abs(x) { return type(x) == "int" ? (x < 0 ? 0 - x : x) : _ab(float(x)) }
 func sign(x) { local v = float(x); return (_n(v) or v == 0.0) ? 0 : (v > 0.0 ? 1 : -1) }
 
@@ -75,7 +75,7 @@ func max(a, b, r...) {
 func clamp(x, lo, hi) { local v = float(x); local a = float(lo); local b = float(hi); return v < a ? a : (v > b ? b : v) }
 func lerp(a, b, t) { return float(a) + (float(b) - float(a)) * float(t) }
 
-// ── 取整 ──────────────────────────────────────────────────────────────────
+// 取整
 func floor(x) {
     local v = float(x)
     if ((_n(v) or _ii(v) or v > _B53 or v < 0.0 - _B53)) { return v }
@@ -98,7 +98,7 @@ func round(x, n = 0) {
 }
 func roundN(x, n) { return round(x, n) }
 
-// ── 幂 / 指数 / 对数 ──────────────────────────────────────────────────────
+// 幂 / 指数 / 对数
 func sqrt(x) {
     local v = float(x)
     if (_n(v)) { return v }
@@ -196,7 +196,7 @@ func pow(x, y) {
     return exp(p * log(b))
 }
 
-// ── 三角 ──────────────────────────────────────────────────────────────────
+// 三角
 func _sk(r) {   // |r| <= pi/4 的正弦级数
     local r2 = r * r; local t = r; local s = r; local n = 1; local i = 0
     while (i < 80) { t = 0.0 - t * r2 / float((2 * n) * (2 * n + 1)); local pv = s; s = s + t; if (s == pv) { break }; n = n + 1; i = i + 1 }
@@ -298,7 +298,7 @@ func acos(x) {
 func rad(x) { return float(x) * _PI / 180.0 }
 func deg(x) { return float(x) * 180.0 / _PI }
 
-// ── 双曲（一律走 expm1，避免 |x| 很小时 e^x-e^-x 的灾难性抵消）────────────
+// 双曲（一律走 expm1，避免 |x| 很小时 e^x-e^-x 的灾难性抵消）
 func sinh(x) {
     local v = float(x)
     if (_n(v) or _ii(v)) { return v }
@@ -350,7 +350,7 @@ func atanh(x) {
     return 0.5 * log((1.0 + v) / (1.0 - v))
 }
 
-// ── 取余 / 整数 ───────────────────────────────────────────────────────────
+// 取余 / 整数
 func fmod(x, y) { local a = float(x); local b = float(y); return (b == 0.0 or _ii(a) or _n(a) or _n(b)) ? _NAN : a % b }
 func mod(x, y) {
     local b = float(y)
@@ -391,7 +391,7 @@ func perm(n, k) {
     return r
 }
 
-// ── 判定 ──────────────────────────────────────────────────────────────────
+// 判定
 func isNaN(x) { return _n(float(x)) }
 func isInf(x) { return _ii(float(x)) }
 func isFinite(x) { local v = float(x); return not (_n(v) or _ii(v)) }
@@ -403,7 +403,7 @@ func isClose(a, b, eps = 0.000000001) {
 }
 func isCloseE(a, b, eps) { return isClose(a, b, eps) }
 
-// ── 表 / 随机 ─────────────────────────────────────────────────────────────
+// 表 / 随机
 func sum(t)   { local s = 0; local n = len(t); local i = 1; while (i <= n) { s = s + t[i]; i = i + 1 }; return s }
 func mean(t)  { local n = len(t); return n == 0 ? _NAN : float(sum(t)) / float(n) }
 func minOf(t) { local n = len(t); if (n == 0) { return null }; local m = t[1]; local i = 2; while (i <= n) { if (t[i] < m) { m = t[i] }; i = i + 1 }; return m }

@@ -1,13 +1,10 @@
-// =============================================================================
-//  path —— 路径字符串运算（内置库，头文件版）
-// -----------------------------------------------------------------------------
-//  ★ 头文件版（header-only）：本文件不再编译成 .so / .dll，
-//    而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
-//    因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
+// path —— 路径字符串运算（内置库，头文件版）
+// 头文件版（header-only）：本文件不再编译成 .so / .dll，
+// 而是由 Apt/ae_builtin.h 直接 #include，在编译 ae / aec 时静态链入。
+// 因此：工具链只有两个可执行文件（aec 编译器 + ae 虚拟机），没有库文件。
 //
-//    · 整个实现包在命名空间 ae_lib_path 里，避免与另外几个库重名
-//    · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
-// =============================================================================
+// · 整个实现包在命名空间 ae_lib_path 里，避免与另外几个库重名
+// · 末尾的 getExports() / setApi() 取代原来的 AE_MODULE 宏（动态库导出符号）
 #ifndef AE_LIB_PATH_H
 #define AE_LIB_PATH_H
 
@@ -17,16 +14,12 @@
 #include "ae_libutil.h"
 #include <cctype>
 
-// ---------------------------------------------------------------------------
-//  实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
-// ---------------------------------------------------------------------------
+// 实现（独立命名空间：静态链接时也保持每个库各自的错误槽与内部符号）
 namespace ae_lib_path {
 
 using namespace aelib;
 
-// ---------------------------------------------------------------------------
-//  规范形式与内部工具
-// ---------------------------------------------------------------------------
+// 规范形式与内部工具
 static std::string canonSep(const std::string& p) {
     std::string s = p;
     for (char& c : s) if (c == '\\') c = '/';
@@ -94,9 +87,7 @@ static std::string extOf(const std::string& p) {
     return b.substr(dot);
 }
 
-// ---------------------------------------------------------------------------
-//  查询
-// ---------------------------------------------------------------------------
+// 查询
 static int nat_sep(AeVM* vm, int, AeValue*) {
 #ifdef _WIN32
     ae_push_str(vm, "\\");
@@ -110,9 +101,7 @@ static int nat_isAbsolute(AeVM* vm, int argc, AeValue* argv) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  拆解
-// ---------------------------------------------------------------------------
+// 拆解
 static int nat_dirname(AeVM* vm, int argc, AeValue* argv) {
     std::string d = dropTrailingSep(argStr(vm, argv, argc, 0, "dirname"));
     size_t pos = d.find_last_of('/');
@@ -150,9 +139,7 @@ static int nat_split(AeVM* vm, int argc, AeValue* argv) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  组装与规范化
-// ---------------------------------------------------------------------------
+// 组装与规范化
 static int nat_join(AeVM* vm, int argc, AeValue* argv) {
     std::string acc;
     for (int i = 0; i < argc; i++) {
@@ -210,9 +197,7 @@ static int nat_lastError(AeVM* vm, int, AeValue*) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
-//  导出表
-// ---------------------------------------------------------------------------
+// 导出表
 static const AeNativeDef kExports[] = {
     // 查询
     { "sep",          0, 0, nat_sep        },
@@ -238,10 +223,9 @@ static const AeNativeDef* path_getExports(int* count) {
     return kExports;
 }
 
-// ── 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）──────────────
+// 内置库接入点（取代 AE_MODULE 宏：不再导出动态库符号）
 inline const AeNativeDef* getExports(int* count) { return path_getExports(count); }
 inline void setApi(const AeApi* api) { ae_abi::g_api = api; }
-
 
 } // namespace ae_lib_path
 

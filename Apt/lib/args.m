@@ -1,68 +1,65 @@
-// =============================================================================
-//  args —— Ae 的命令行参数解析库（★ 用 Ae 写）
-// -----------------------------------------------------------------------------
-//  和 os 的分工：
-//      os.args()   → 【原始】参数表（系统给了什么，字符串数组）
-//      args（本库）→ 【解析】规格化的选项（短/长选项、取值、--、帮助、错误）
+// args —— Ae 的命令行参数解析库（ 用 Ae 写）
+// 和 os 的分工：
+// os.args() → 原始参数表（系统给了什么，字符串数组）
+// args（本库）→ 解析规格化的选项（短/长选项、取值、--、帮助、错误）
 //
-//  用法：
-//      imp args
+// 用法：
+// imp args
 //
-//      local spec = {
-//          {name = "verbose", short = "v", kind = "flag",   help = "输出详细信息"},
-//          {name = "out",     short = "o", kind = "option", help = "输出文件", default = "out.txt"},
-//          {name = "count",   short = "c", kind = "option", help = "重复次数"},
-//          {name = "input",   short = "i", kind = "option", help = "输入目录", multiple = true},
-//      }
+// local spec = {
+// {name = "verbose", short = "v", kind = "flag", help = "输出详细信息"},
+// {name = "out", short = "o", kind = "option", help = "输出文件", default = "out.txt"},
+// {name = "count", short = "c", kind = "option", help = "重复次数"},
+// {name = "input", short = "i", kind = "option", help = "输入目录", multiple = true},
+// }
 //
-//      local a = args.parseOrExit(spec)     // 出错/请求帮助会自动打印并退出
-//      prln(a.verbose, a.out, a.count, a.input, a.rest)
+// local a = args.parseOrExit(spec) // 出错/请求帮助会自动打印并退出
+// prln(a.verbose, a.out, a.count, a.input, a.rest)
 //
-//  支持的写法：
-//      -v            短选项（flag/count）
-//      -vo out.txt   短选项可以连写；遇到需要值的选项，剩下的字符当它的值
-//      -o out.txt    值取下一个参数
-//      --out=x       长选项用 = 接值
-//      --out x       长选项的值取下一个参数
-//      --            之后的全部算位置参数
-//      -             单独一个横线算位置参数（约定表示标准输入）
-//      以 - 开头但后面是数字（如 -5）算位置参数
+// 支持的写法：
+// v 短选项（flag/count）
+// vo out.txt 短选项可以连写；遇到需要值的选项，剩下的字符当它的值
+// o out.txt 值取下一个参数
+// out=x 长选项用 = 接值
+// out x 长选项的值取下一个参数
+// 之后的全部算位置参数
+// 单独一个横线算位置参数（约定表示标准输入）
+// 以 - 开头但后面是数字（如 -5）算位置参数
 //
-//  -h / --help 是【短路】的：一旦出现就立刻返回（help = true、error = null），
-//  后面的参数不再解析，required 也不再校验 —— 这是"请求帮助"该有的行为。
+// h / --help 是短路的：一旦出现就立刻返回（help = true、error = null），
+// 后面的参数不再解析，required 也不再校验 —— 这是"请求帮助"该有的行为。
 //
-//  导出函数：
-//      parse(spec)                 用 os.args()（含程序名，会自动跳过 argv[0]）
-//      parseArgv(spec, argv)       用给定的参数数组（★ 测试/复用用这个，可复现）
-//      parseOrExit(spec)           出错就直接打印用法并 exit(3)（Ae 的"用法错误"码），
-//                                  -h/--help 时打印帮助并 exit(0)
-//      usage(spec)                帮助文本（程序名自动推导）
-//      usageNamed(spec, prog)     帮助文本（指定程序名）
-//      intOr(s, def) / floatOr(s, def)   选项值都是字符串，转换失败给默认值（不抛错）
-//  帮助文本按【显示宽度】对齐（中文/全角/表情算 2 列）。
+// 导出函数：
+// parse(spec) 用 os.args()（含程序名，会自动跳过 argv[0]）
+// parseArgv(spec, argv) 用给定的参数数组（ 测试/复用用这个，可复现）
+// parseOrExit(spec) 出错就直接打印用法并 exit(3)（Ae 的"用法错误"码），
+// h/--help 时打印帮助并 exit(0)
+// usage(spec) 帮助文本（程序名自动推导）
+// usageNamed(spec, prog) 帮助文本（指定程序名）
+// intOr(s, def) / floatOr(s, def) 选项值都是字符串，转换失败给默认值（不抛错）
+// 帮助文本按显示宽度对齐（中文/全角/表情算 2 列）。
 //
-//  spec 每项支持的字段：
-//      name      长选项名（必填）
-//      short     单字符短选项（可选）
-//      kind      "flag"（默认）| "option"（取值）| "count"（可重复，计数）
-//      help      帮助文本
-//      default   option 的默认值
-//      required  必填（缺了报错）
-//      multiple  option 可重复，值收进一个数组
+// spec 每项支持的字段：
+// name 长选项名（必填）
+// short 单字符短选项（可选）
+// kind "flag"（默认）| "option"（取值）| "count"（可重复，计数）
+// help 帮助文本
+// default option 的默认值
+// required 必填（缺了报错）
+// multiple option 可重复，值收进一个数组
 //
-//  返回表字段：
-//      每个选项名 → 值（flag 是 bool，count 是 int，option 是 string/数组/null）
-//      rest       位置参数数组
-//      help       是否请求了 -h/--help
-//      error      解析错误信息（null 表示没错误）★ 预期失败用返回值，不抛异常
-//      prog       推导出的程序名（取自 os.scriptPath()）
+// 返回表字段：
+// 每个选项名 → 值（flag 是 bool，count 是 int，option 是 string/数组/null）
+// rest 位置参数数组
+// help 是否请求了 -h/--help
+// error 解析错误信息（null 表示没错误） 预期失败用返回值，不抛异常
+// prog 推导出的程序名（取自 os.scriptPath()）
 //
-//  解析错误不抛异常（这是"预期失败"），要省事就用 parseOrExit()。
-// =============================================================================
+// 解析错误不抛异常（这是"预期失败"），要省事就用 parseOrExit()。
 imp os
 imp path
 
-// ── 对外入口 ────────────────────────────────────────────────────────────────
+// 对外入口
 
 func parse(spec) { return parseArgv(spec, os.args()) }
 
@@ -125,7 +122,7 @@ func floatOr(s, def) {
     try { return float(s) } catch (e) { return def }
 }
 
-// ── 解析实现 ────────────────────────────────────────────────────────────────
+// 解析实现
 
 func parseArgv(spec, argv) {
     local r = _newResult(spec)
@@ -145,7 +142,7 @@ func parseArgv(spec, argv) {
             continue
         }
         if (_startsWith(tok, "--")) {
-            // ── 长选项：--name / --name=value ──
+            // 长选项：--name / --name=value
             local body = substr(tok, 3, len(tok) - 2)
             local eq = find(body, "=")
             local nm = body
@@ -154,7 +151,7 @@ func parseArgv(spec, argv) {
                 nm = substr(body, 1, eq - 1)
                 inlineVal = substr(body, eq + 1, len(body) - eq)
             }
-            if (nm == "help") { r.help = true  return r }   // ★ -h/--help 短路：不再校验必填
+            if (nm == "help") { r.help = true  return r }   // -h/--help 短路：不再校验必填
             local d = _findLong(spec, nm)
             if (d == null) { return _err(r, "未知选项 --" + nm) }
             if (_kindOf(d) == "option") {
@@ -179,12 +176,12 @@ func parseArgv(spec, argv) {
             continue
         }
         if (len(tok) >= 2 and substr(tok, 1, 1) == "-" and not _looksLikeNegative(tok)) {
-            // ── 短选项簇：-v / -vo out.txt / -o out.txt ──
+            // 短选项簇：-v / -vo out.txt / -o out.txt
             local k = 2
             local consumedNext = false
             while (k <= len(tok)) {
                 local ch = tok[k]
-                if (ch == "h") { r.help = true  return r }      // ★ 短路：不再校验必填
+                if (ch == "h") { r.help = true  return r }      // 短路：不再校验必填
                 local d = _findShort(spec, ch)
                 if (d == null) { return _err(r, "未知选项 -" + ch) }
                 if (_kindOf(d) == "option") {
