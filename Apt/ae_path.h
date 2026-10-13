@@ -1,24 +1,21 @@
-// =============================================================================
-//  ae_path.h —— 路径与文件读写的编码处理（Windows 上必须做的事）
-// -----------------------------------------------------------------------------
-//  问题
-//    工具链内部【一律用 UTF-8】：源码里的字符串（run("b.aeo")、io.readFile）是
-//    UTF-8；而 Windows 上
-//      · 命令行参数（argv）是本机 ANSI 代码页（中文系统上 GBK）
-//      · 文件 API（ifstream/fopen）按 ANSI 解释路径
-//    于是「中文文件名」会踩两种坑：从命令行传进来的路径被打上 GBK 字节、
-//    脚本里写的路径是 UTF-8 字节 —— 谁都可能打不开对方的文件。
+// ae_path.h —— 路径与文件读写的编码处理（Windows 上必须做的事）
+// 问题
+// 工具链内部一律用 UTF-8：源码里的字符串（run("b.aeo")、io.readFile）是
+// UTF-8；而 Windows 上
+// · 命令行参数（argv）是本机 ANSI 代码页（中文系统上 GBK）
+// · 文件 API（ifstream/fopen）按 ANSI 解释路径
+// 于是「中文文件名」会踩两种坑：从命令行传进来的路径被打上 GBK 字节、
+// 脚本里写的路径是 UTF-8 字节 —— 谁都可能打不开对方的文件。
 //
-//  做法
-//    · ansiToUtf8(s)     把 argv 这类本机 ANSI 字节转成 UTF-8
-//    · resolvePath(raw)  同一个字节串两种解释都试（UTF-8 优先，再试 ANSI），
-//                        返回真实存在的那个的 UTF-8 形式；诊断里显示的文件名才不乱码
-//    · readFileBytes / writeFileBytes / fileExists
-//                        走宽字符 API（_wfopen / GetFileAttributesW），彻底绕开代码页
-//    非 Windows 平台：这些函数退化成直接用 std::ifstream / fopen（那边本来就是 UTF-8）。
+// 做法
+// · ansiToUtf8(s) 把 argv 这类本机 ANSI 字节转成 UTF-8
+// · resolvePath(raw) 同一个字节串两种解释都试（UTF-8 优先，再试 ANSI），
+// 返回真实存在的那个的 UTF-8 形式；诊断里显示的文件名才不乱码
+// · readFileBytes / writeFileBytes / fileExists
+// 走宽字符 API（_wfopen / GetFileAttributesW），彻底绕开代码页
+// 非 Windows 平台：这些函数退化成直接用 std::ifstream / fopen（那边本来就是 UTF-8）。
 //
-//  用法：`#include "ae_path.h"`，然后 aepath::xxx
-// =============================================================================
+// 用法：`#include "ae_path.h"`，然后 aepath::xxx
 #ifndef AE_PATH_H
 #define AE_PATH_H
 
@@ -95,7 +92,7 @@ inline bool fileExists(const std::string& utf8Path) {
 #endif
 }
 
-// 把"可能是 UTF-8、也可能是 ANSI"的路径解析成真实存在的【UTF-8 路径】
+// 把"可能是 UTF-8、也可能是 ANSI"的路径解析成真实存在的UTF-8 路径
 inline bool resolvePath(const std::string& raw, std::string* utf8Out) {
     if (raw.empty()) return false;
     if (fileExists(raw)) { if (utf8Out) *utf8Out = raw; return true; }
@@ -152,22 +149,19 @@ inline std::string dirOf(const std::string& p) {
     return (s == std::string::npos) ? std::string() : p.substr(0, s);
 }
 
-// =============================================================================
-//  资产目录（assets/）查找
-// -----------------------------------------------------------------------------
-//  为什么要这个
-//    项目结构是 <项目>/apt（放脚本） 与 <项目>/assets（放素材），
-//    而运行时的工作目录是 apt —— 于是在脚本里想读 assets 里的素材，
-//    只能写 "..\\assets\\地图.tmx" 这种带 ../ 的路径，很啰嗦也容易写错。
+// 资产目录（assets/）查找
+// 为什么要这个
+// 项目结构是 <项目>/apt（放脚本） 与 <项目>/assets（放素材），
+// 而运行时的工作目录是 apt —— 于是在脚本里想读 assets 里的素材，
+// 只能写 "..\\assets\\地图.tmx" 这种带 ../ 的路径，很啰嗦也容易写错。
 //
-//  约定（见 resolveAssetPath）
-//    · 绝对路径、带 ../ 或子目录的相对路径：先【原样】找（旧行为完全保留）
-//    · 找不到的 / 只写了文件名的：再去资产根目录里挨个找
-//    · 顺序：AE_ASSETS 环境变量 → 当前目录/assets → 上一级/assets
-//          → 上两级/assets → 可执行文件旁边/assets
+// 约定（见 resolveAssetPath）
+// · 绝对路径、带 ../ 或子目录的相对路径：先原样找（旧行为完全保留）
+// · 找不到的 / 只写了文件名的：再去资产根目录里挨个找
+// · 顺序：AE_ASSETS 环境变量 → 当前目录/assets → 上一级/assets
+// → 上两级/assets → 可执行文件旁边/assets
 //
-//  写操作（io.writeFile 等）不走这套：凭空造一个输出位置比报错更危险。
-// =============================================================================
+// 写操作（io.writeFile 等）不走这套：凭空造一个输出位置比报错更危险。
 
 // 拼路径：左边没有结尾分隔符时补一个（跟着左边原有的风格）
 inline std::string joinPath(const std::string& a, const std::string& b) {

@@ -1,29 +1,26 @@
-// =============================================================================
-//  Ae 诊断系统  ——  ae_diag.h
-// -----------------------------------------------------------------------------
-//  目标：像正常编程语言那样报错 —— 有【错误码】、【错误类别】、源码摘录、
-//        波浪线定位、以及可选 help/note。全部只用 ASCII 标记（[-] [!] [+]），
-//        不依赖 ✗ 这类符号，任何终端/编码环境都能正常显示。
+// Ae 诊断系统 —— ae_diag.h
+// 目标：像正常编程语言那样报错 —— 有错误码、错误类别、源码摘录、
+// 波浪线定位、以及可选 help/note。全部只用 ASCII 标记（[-] [!] [+]），
+// 不依赖 ✗ 这类符号，任何终端/编码环境都能正常显示。
 //
-//  输出格式：
-//      [-] error[E1006]: 未声明的变量 'pritn'
-//          --> test.ae:4:8
-//           |
-//         4 |     prln(pritn)
-//           |          ^^^^^
-//           |
-//           = help: 赋值可隐式创建全局；函数内请先用 local 声明
+// 输出格式：
+// [-] error[E1006]: 未声明的变量 'pritn'
+// > test.ae:4:8
+// |
+// 4 | prln(pritn)
+// | ^^^^^
+// |
+// help: 赋值可隐式创建全局；函数内请先用 local 声明
 //
-//       运行期错误额外带调用栈：
-//           = stack (最近调用在前)
-//             level3  fib.ae:2:18
-//             level2  fib.ae:5:12
+// 运行期错误额外带调用栈：
+// stack (最近调用在前)
+// level3 fib.ae:2:18
+// level2 fib.ae:5:12
 //
-//  码段约定：
-//      E1xxx  编译期（词法/语法/名称/类型/导入）
-//      E2xxx  运行期（类型/除零/索引/字节码/原生库）
-//      E0xxx  工具链自身（用法、IO、内部错误）
-// =============================================================================
+// 码段约定：
+// E1xxx 编译期（词法/语法/名称/类型/导入）
+// E2xxx 运行期（类型/除零/索引/字节码/原生库）
+// E0xxx 工具链自身（用法、IO、内部错误）
 #ifndef AE_DIAG_H
 #define AE_DIAG_H
 
@@ -38,7 +35,7 @@
 #include <stdexcept>
 #include <algorithm>
 
-// ── 错误码：编译期 ──
+// 错误码：编译期
 #define AE_E_SYNTAX        "E1001"   // 通用语法错误
 #define AE_E_BADCHAR       "E1002"   // 非法字符
 #define AE_E_STR_UNCLOSED  "E1003"   // 字符串未闭合
@@ -62,7 +59,7 @@
 #define AE_E_TABLE_LIT     "E1021"   // 表字面量语法
 #define AE_E_MAIN_SIG      "E1022"   // main 签名非法
 #define AE_E_SECTION       "E1023"   // 字节码/编译内部错误
-// ── 错误码：运行期 ──
+// 错误码：运行期
 #define AE_E_TYPE          "E2001"   // 类型不匹配
 #define AE_E_DIV_ZERO      "E2002"   // 除零
 #define AE_E_INDEX         "E2003"   // 表索引/键非法
@@ -74,7 +71,7 @@
 #define AE_E_NATIVE        "E2009"   // 原生库报错
 #define AE_E_INPUT         "E2010"   // 输入读取失败
 #define AE_E_INTERNAL      "E2011"   // VM 内部错误
-// ── 错误码：工具链 ──
+// 错误码：工具链
 #define AE_E_USAGE         "E0001"   // 命令行用法错误
 #define AE_E_FILE          "E0002"   // 文件读写/加载失败
 
@@ -83,7 +80,7 @@ namespace aediag {
 struct AeSpan {
     std::string file;
     int line = 1;
-    int col  = 1;      // 1-based，按【字节】计数（与词法器一致），打印时转显示列
+    int col  = 1;      // 1-based，按字节计数（与词法器一致），打印时转显示列
     int len  = 1;      // 下划线长度（字节）
 };
 
@@ -112,7 +109,7 @@ inline AeDiag make(const std::string& code, const std::string& msg) {
     throw AeError(make(code, msg));
 }
 
-// ── 源码摘录工具 ──
+// 源码摘录工具
 inline std::string lineAt(const std::string& src, int line) {
     if (line < 1 || src.empty()) return std::string();
     int cur = 1;
@@ -132,10 +129,10 @@ inline std::string lineAt(const std::string& src, int line) {
     return std::string();
 }
 
-// 一行里第 byteCol 个字节对应的【显示列】（制表符按 4 空格展开，UTF-8 按码点算 1 列）
-// ★ 修（CJK）：中文/全角字符在终端和编辑器里占 2 列，以前一律算 1 列 —— 于是
-//   「一行里前面有中文」时，^ 光标会比目标字符偏左（差几个字就偏几个字符位）。
-//   现在按显示宽度计算，和终端里看到的对齐。
+// 一行里第 byteCol 个字节对应的显示列（制表符按 4 空格展开，UTF-8 按码点算 1 列）
+// 修（CJK）：中文/全角字符在终端和编辑器里占 2 列，以前一律算 1 列 —— 于是
+// 「一行里前面有中文」时，^ 光标会比目标字符偏左（差几个字就偏几个字符位）。
+// 现在按显示宽度计算，和终端里看到的对齐。
 inline int cpWidth(unsigned cp) {
     if (cp == 0) return 0;
     // 组合符号 / 零宽：不占列
@@ -232,13 +229,13 @@ inline int spanChars(const std::string& line, int byteCol, int byteLen) {
     return spanWidth(line, byteCol, byteLen);
 }
 
-// ── 打印一条诊断 ──
+// 打印一条诊断
 inline void printDiag(const AeDiag& d, const std::string& src) {
     std::cerr << "[-] " << d.kind << "[" << d.code << "]: " << d.msg << "\n";
     if (d.hasSpan) {
         std::string raw = lineAt(src, d.span.line);
-        // ★ 列号按【显示列】打印：中文算 2 列，和你编辑器状态栏里的列号一致；
-        //   内部 span.col 仍是字节列，只在对外显示时换算
+        // 列号按显示列打印：中文算 2 列，和你编辑器状态栏里的列号一致；
+        // 内部 span.col 仍是字节列，只在对外显示时换算
         int showCol = d.span.col;
         if (!raw.empty()) showCol = displayCol(raw, d.span.col, nullptr) + 1;
         std::cerr << "    --> " << d.span.file << ":" << d.span.line << ":" << showCol << "\n";

@@ -1,34 +1,31 @@
-// =============================================================================
-//  Ae 原生库 ABI  ——  ae_native.h
-// -----------------------------------------------------------------------------
-//  写原生库只需要 include 这一个头文件。**不要** include VM 的内部头
-//  （Value / Table 的布局随时会变，而 ABI 承诺稳定）。
+// Ae 原生库 ABI —— ae_native.h
+// 写原生库只需要 include 这一个头文件。**不要** include VM 的内部头
+// （Value / Table 的布局随时会变，而 ABI 承诺稳定）。
 //
-//  设计要点
-//    ① 宿主（aec / ae）加载 <name>.dll 并取导出符号 `ae_module`。
-//    ② 宿主用 setApi() 把函数表【注入】给库 —— 库因此不依赖宿主的任何导出符号，
-//       直接 `clang++ -shared io.cpp -o io.dll` 就能编译，不需要 import lib。
-//    ③ 原生函数签名： int fn(AeVM* vm, int argc, AeValue* argv)
-//         · 返回值 = 压入 VM 栈的值个数（0 或 1 常见，也支持多返回值 / 返回 0 个）
-//         · 参数通过 argv 只读访问；要返回就在函数里 push
-//    ④ 两类错误分开：
-//         · 预期失败（文件不存在、目录为空…）→ 返回 null/false + ae_set_error("原因")
-//           ，脚本侧用 <lib>.lastError() 取原因，程序继续跑
-//         · 程序性错误（参数类型不对、句柄非法…）→ ae_raise(vm, "...")
-//           ，立刻变成带调用栈的运行错误
+// 设计要点
+// ① 宿主（aec / ae）加载 <name>.dll 并取导出符号 `ae_module`。
+// ② 宿主用 setApi() 把函数表注入给库 —— 库因此不依赖宿主的任何导出符号，
+// 直接 `clang++ -shared io.cpp -o io.dll` 就能编译，不需要 import lib。
+// ③ 原生函数签名： int fn(AeVM* vm, int argc, AeValue* argv)
+// · 返回值 = 压入 VM 栈的值个数（0 或 1 常见，也支持多返回值 / 返回 0 个）
+// · 参数通过 argv 只读访问；要返回就在函数里 push
+// ④ 两类错误分开：
+// · 预期失败（文件不存在、目录为空…）→ 返回 null/false + ae_set_error("原因")
+// ，脚本侧用 <lib>.lastError() 取原因，程序继续跑
+// · 程序性错误（参数类型不对、句柄非法…）→ ae_raise(vm, "...")
+// ，立刻变成带调用栈的运行错误
 //
-//  最小骨架：
-//      #include "ae_native.h"
-//      static int nat_hello(AeVM* vm, int argc, AeValue* argv) {
-//          ae_push_str(vm, "hello", 5);
-//          return 1;
-//      }
-//      static const AeNativeDef kExports[] = {
-//          { "hello", 0, 0, nat_hello },
-//      };
-//      static const AeNativeDef* getExports(int* n) { *n = 1; return kExports; }
-//      AE_MODULE("hello", getExports)
-// =============================================================================
+// 最小骨架：
+// #include "ae_native.h"
+// static int nat_hello(AeVM* vm, int argc, AeValue* argv) {
+// ae_push_str(vm, "hello", 5);
+// return 1;
+// }
+// static const AeNativeDef kExports[] = {
+// { "hello", 0, 0, nat_hello },
+// };
+// static const AeNativeDef* getExports(int* n) { *n = 1; return kExports; }
+// AE_MODULE("hello", getExports)
 #ifndef AE_NATIVE_H
 #define AE_NATIVE_H
 
@@ -58,7 +55,7 @@ enum {
     AE_STRING = 3,
     AE_BOOL   = 4,
     AE_TABLE  = 5,
-    AE_FUNC   = 6    // ★ ABI v4：闭包（函数值）
+    AE_FUNC   = 6    // ABI v4：闭包（函数值）
 };
 
 // 不透明值：只用下面的 API 操作，别直接读 p。
@@ -96,23 +93,23 @@ typedef struct AeApi {
     /* 错误 */
     void (*set_error)(const char* msg);   // 预期失败：记录原因，不中断
     void (*raise)    (AeVM*, const char* msg);  // 程序性错误：变成运行错误
-    /* ★ ABI v2：宿主环境查询（脚本参数 / 脚本路径） */
+    /*  ABI v2：宿主环境查询（脚本参数 / 脚本路径） */
     int         (*arg_count)(AeVM*);
     const char* (*arg_get)  (AeVM*, int idx, size_t* len);
     const char* (*script_path)(AeVM*, size_t* len);
-    /* ★ ABI v3：读表 —— 原生库要能处理 {x = 1} 这种选项表 / {x1,y1,x2,y2} 这种点数组
+    /*  ABI v3：读表 —— 原生库要能处理 {x = 1} 这种选项表 / {x1,y1,x2,y2} 这种点数组
        · table_get 返回 1 表示取到了，0 表示键不存在（out 置 null）
-       · 取到字符串时 out->p 指向表里那份 std::string，【借用】即可，
+       · 取到字符串时 out->p 指向表里那份 std::string，借用即可，
          只要表还活着就有效（原生调用期间一定活着），不要 free
        · table_len = 数组段长度（连续整数键前缀），不是"非空项个数" */
     int         (*table_get)(AeVM*, AeValue t, AeValue k, AeValue* out);
     int         (*table_len)(AeVM*, AeValue t);
-    /* ★ ABI v4：回调 Ae 函数（ui 的事件 handler 靠这套）
-       · 闭包用【句柄】持有：func_retain 拿到 >0 的 handle，不用了必须 func_release
+    /*  ABI v4：回调 Ae 函数（ui 的事件 handler 靠这套）
+       · 闭包用句柄持有：func_retain 拿到 >0 的 handle，不用了必须 func_release
          （为什么不直接存 AeValue：那是个借用指针，脚本一挪栈就悬空了）
        · func_call 的参数用你自己造的值（整数/字符串/表都行；表用 new_table 造）
        · 成功返回 1 并把结果写进 *out；失败返回 0，原因写进 *err
-         失败【不会】自动中断脚本：库要么用 raise() 转成运行错误，要么自己忽略。
+         失败不会自动中断脚本：库要么用 raise() 转成运行错误，要么自己忽略。
          回调内部发生的一切（包括再嵌套调用原生库）都是安全的。 */
     int         (*func_retain)(AeVM*, AeValue fn);
     void        (*func_release)(AeVM*, int handle);
@@ -133,9 +130,7 @@ typedef struct AeModule {
 }  // extern "C"
 #endif
 
-// =============================================================================
-//  C++ 便捷包装：库代码直接调 ae_push_str(...) 就行
-// =============================================================================
+// C++ 便捷包装：库代码直接调 ae_push_str(...) 就行
 #ifdef __cplusplus
 #include <string>
 namespace ae_abi {
@@ -174,7 +169,7 @@ inline void ae_table_set(AeVM* vm, AeValue t, AeValue k, AeValue v) { ae_abi::g_
 inline void ae_set_error(const std::string& m)         { ae_abi::g_api->set_error(m.c_str()); }
 inline void ae_raise(AeVM* vm, const std::string& m)   { ae_abi::g_api->raise(vm, m.c_str()); }
 
-// ★ ABI v2：脚本的命令行参数与脚本路径
+// ABI v2：脚本的命令行参数与脚本路径
 inline int ae_arg_count(AeVM* vm) { return ae_abi::g_api->arg_count(vm); }
 inline std::string ae_arg(AeVM* vm, int idx) {
     size_t n = 0;
@@ -187,7 +182,7 @@ inline std::string ae_script_path(AeVM* vm) {
     return p ? std::string(p, n) : std::string();
 }
 
-// ★ ABI v4：回调 Ae 函数（句柄式，见 AeApi 里 func_retain 的说明）
+// ABI v4：回调 Ae 函数（句柄式，见 AeApi 里 func_retain 的说明）
 inline int  ae_retain_func (AeVM* vm, AeValue fn) { return ae_abi::g_api->func_retain(vm, fn); }
 inline void ae_release_func(AeVM* vm, int h)      { if (h > 0) ae_abi::g_api->func_release(vm, h); }
 inline bool ae_call_func(AeVM* vm, int h, int argc, const AeValue* argv,
@@ -201,7 +196,7 @@ inline bool ae_call_func1(AeVM* vm, int h, AeValue arg, AeValue* out, std::strin
     return ae_call_func(vm, h, 1, &arg, out, err);
 }
 
-// ★ ABI v3：读脚本传进来的表（选项表 / 点数组）
+// ABI v3：读脚本传进来的表（选项表 / 点数组）
 inline bool ae_table_get(AeVM* vm, AeValue t, AeValue k, AeValue* out) {
     if (!ae_abi::g_api->table_get) return false;
     return ae_abi::g_api->table_get(vm, t, k, out) != 0;

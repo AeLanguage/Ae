@@ -1,26 +1,23 @@
-// =============================================================================
-//  ae_console.h —— 控制台中文（编码）修复
-// -----------------------------------------------------------------------------
-//  问题
-//    Windows 控制台默认代码页是 936(GBK) / 437 等，而工具链内部【一律用 UTF-8】。
-//    cout << "中文" 写出去的是 UTF-8 字节，cmd 按 GBK 解释 → ASCII 正常、中文乱码。
-//    脚本的 pr/ prln 和工具链自己的诊断信息都走 cout/cerr，所以两边都乱。
+// ae_console.h —— 控制台中文（编码）修复
+// 问题
+// Windows 控制台默认代码页是 936(GBK) / 437 等，而工具链内部一律用 UTF-8。
+// cout << "中文" 写出去的是 UTF-8 字节，cmd 按 GBK 解释 → ASCII 正常、中文乱码。
+// 脚本的 pr/ prln 和工具链自己的诊断信息都走 cout/cerr，所以两边都乱。
 //
-//  做法（Windows）
-//    · stdout/stderr 是【控制台】→ 把 cout/cerr 的底层缓冲换成
-//      "UTF-8 → UTF-16 → WriteConsoleW"：WriteConsoleW 直接跟控制台会话打交道，
-//      【不经过代码页】，因此 GBK 的 cmd 里中文也正确。
-//      同时刻意【不】改控制台自己的代码页 —— 那会影响同一个窗口里跑的其他程序。
-//    · stdout/stderr 是【管道/文件】（重定向）→ 完全不动，照旧写 UTF-8 字节。
-//      所以 `ae x.aeo > out.txt`、测试脚本读文件的行为都没变。
-//    · stdin 是【控制台】→ 换成 ReadConsoleW 读一行再转 UTF-8，
-//      这样在 GBK 的 cmd 里手打中文给 inp() 也不会乱（同样不改输入代码页）。
+// 做法（Windows）
+// · stdout/stderr 是控制台→ 把 cout/cerr 的底层缓冲换成
+// "UTF-8 → UTF-16 → WriteConsoleW"：WriteConsoleW 直接跟控制台会话打交道，
+// 不经过代码页，因此 GBK 的 cmd 里中文也正确。
+// 同时刻意不改控制台自己的代码页 —— 那会影响同一个窗口里跑的其他程序。
+// · stdout/stderr 是管道/文件（重定向）→ 完全不动，照旧写 UTF-8 字节。
+// 所以 `ae x.aeo > out.txt`、测试脚本读文件的行为都没变。
+// · stdin 是控制台→ 换成 ReadConsoleW 读一行再转 UTF-8，
+// 这样在 GBK 的 cmd 里手打中文给 inp() 也不会乱（同样不改输入代码页）。
 //
-//  用法：在 main() 的第一行调用 aecon::install();
-//    · 非 Windows 平台是空实现
-//    · 换下来的原缓冲会被静态持有（不能让它析构）
-//    · WriteConsoleW 失败时自动退回原缓冲写原始字节，不会丢输出
-// =============================================================================
+// 用法：在 main() 的第一行调用 aecon::install();
+// · 非 Windows 平台是空实现
+// · 换下来的原缓冲会被静态持有（不能让它析构）
+// · WriteConsoleW 失败时自动退回原缓冲写原始字节，不会丢输出
 #ifndef AE_CONSOLE_H
 #define AE_CONSOLE_H
 
@@ -65,7 +62,7 @@ inline std::string toUtf8(const std::wstring& w) {
     return s;
 }
 
-// ── 输出：UTF-8 字节累积 → flush 时转 UTF-16 交给控制台 ──────────────────────
+// 输出：UTF-8 字节累积 → flush 时转 UTF-16 交给控制台
 class OutBuf : public std::streambuf {
 public:
     OutBuf(HANDLE h, std::streambuf* fallback) : h_(h), fb_(fallback) {}
@@ -109,7 +106,7 @@ private:
     std::string   buf_;
 };
 
-// ── 输入：ReadConsoleW 读一行（控制台负责回显/退格）→ 转 UTF-8 ───────────────
+// 输入：ReadConsoleW 读一行（控制台负责回显/退格）→ 转 UTF-8
 class InBuf : public std::streambuf {
 public:
     explicit InBuf(HANDLE h) : h_(h) {}

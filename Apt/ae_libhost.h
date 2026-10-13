@@ -1,8 +1,6 @@
-// =============================================================================
-//  Ae 原生库宿主侧加载器  ——  ae_libhost.h
-//  aec（编译器）与 ae（虚拟机）共用：编译器只需要 readExports() 拿名字做
-//  编译期检查；虚拟机需要 load() 真正调用。
-// =============================================================================
+// Ae 原生库宿主侧加载器 —— ae_libhost.h
+// aec（编译器）与 ae（虚拟机）共用：编译器只需要 readExports() 拿名字做
+// 编译期检查；虚拟机需要 load() 真正调用。
 #ifndef AE_LIBHOST_H
 #define AE_LIBHOST_H
 
@@ -71,8 +69,8 @@ inline std::vector<std::string> searchDirs(const std::string& hintDir) {
 }
 
 // 候选文件名：<name>.dll / lib<name>.dll（Windows）
-//             lib<name>.so / <name>.so（Linux 等）
-//             lib<name>.dylib（macOS —— 那边共享库的常规后缀，只试 .so 会找不到）
+// lib<name>.so / <name>.so（Linux 等）
+// lib<name>.dylib（macOS —— 那边共享库的常规后缀，只试 .so 会找不到）
 inline std::vector<std::string> candidateNames(const std::string& name) {
 #ifdef _WIN32
     return { name + ".dll", "lib" + name + ".dll", name };

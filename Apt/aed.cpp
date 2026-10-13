@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     string path;
     if (argc > 1) path = aepath::ansiToUtf8(argv[1]);   // ★ argv 是本机 ANSI，内部一律 UTF-8
     if (!path.empty() && (path == "-h" || path == "--help")) {   // ★ 加：以前 -h 会被当成文件名
-        cout << "Ae 反汇编器 (aed) 2.0.1b\n"
+        cout << "Ae 反汇编器 (aed) 2.1.0\n"
                 "用法: aed <字节码.aeo>\n"
                 "  把 .aeo 反汇编成人读的清单：头部信息 / 常量池 / 函数表 / 指令流 / 行号表\n"
                 "  字节码用 aec 从 .ae 编译得到（aec hello.ae → hello.aeo）\n"
@@ -215,7 +215,12 @@ int main(int argc, char** argv) {
             case 0x1B: cout << "FCMP_GE ; >="; break;
             // ★ 布尔常量
             // ★ P2-1 / P2-2：位运算与幂
+            case 0x1C: cout << "TRUE "; break;
+            case 0x1D: cout << "FALSE"; break;
+            case 0x1E: cout << "NOT  ; 逻辑非"; break;
             case 0x1F: cout << "BNOT ; ~"; break;
+            case 0x26: { uint16_t c = readU16(all, p); uint8_t a = all[p]; uint8_t w = all[p+1]; p += 2;
+                         cout << "NATIVE     #" << c << " a" << (int)a << " w" << (int)w; break; }
             case 0x20: cout << "BAND ; &"; break;
             case 0x21: cout << "BOR  ; |"; break;
             case 0x22: cout << "BXOR ; ^"; break;
@@ -223,22 +228,13 @@ int main(int argc, char** argv) {
             case 0x24: cout << "SHR  ; >> (算术右移)"; break;
             case 0x25: cout << "POW  ; **"; break;
             // ★ P2-1：位运算
-            case 0x1C: cout << "LOAD_TRUE"; break;
-            case 0x1D: cout << "LOAD_FALSE"; break;
-            case 0x1E: cout << "NOT"; break;
-            // 通用表指令（0x50=建表, 0x51=GET, 0x52=SET，与 VM 一致）
-            case 0x50: { uint16_t n = readU16(all, p); cout << "NEW_TABLE  count=" << n; break; }
-            case 0x51: cout << "TABLE_GET  ; table, key → value（未定义得 null）"; break;
-            case 0x52: cout << "TABLE_SET  ; table, key, val → 就地修改"; break;
-            case 0x53: cout << "TABLE_KEYS ; table → 键数组（顺序确定）"; break;
-            case 0x54: cout << "TABLE_LEN  ; table → 长度"; break;
-            case 0x55: { uint16_t i = readU16(all, p); cout << "THROW_CONST #" << i; break; }
-            // ★ 错误捕获：处理器注册 / 注销
-            case 0x27: { uint16_t off = readU16(all, p); cout << "PUSH_HANDLER +" << off; break; }
-            case 0x28: cout << "POP_HANDLER"; break;
-            case 0x2A: { uint16_t off = readU16(all, p); cout << "JZ         +" << off; break; }
-
-            case 0x2B: { uint16_t off = readU16(all, p); cout << "JMP        +" << off; break; }
+            case 0x29: cout << "IN      ; in"; break;
+            case 0x2A: { uint16_t d = readU16(all, p); cout << "JZ        " << (int)(int16_t)d; break; }
+            case 0x2B: { uint16_t d = readU16(all, p); cout << "JMP       " << (int)(int16_t)d; break; }
+            case 0x2C: cout << "SLICE   ; a[s:e:k]"; break;
+            case 0x2D: { uint16_t f=readU16(all,p); uint8_t a=all[p+2]; p+=3; cout<<"DEFER  f#"<<f<<" a"<<(int)a; break; }
+            case 0x2E: { size_t q=p; uint16_t c=readU16(all,q); uint8_t a=all[p+2]; uint8_t w=all[p+3]; p+=4; cout<<"DEFER_NATIVE #"<<c<<" a"<<(int)a<<" w"<<(int)w; break; }
+            case 0x2F: { uint16_t sc=readU16(all,p); p+=2; cout<<"END_DEFER scope>"<<sc; break; }
             case 0x30: { uint16_t s = readU16(all, p); cout << "LOCAL_STORE slot@" << s; break; }
             case 0x31: { uint16_t s = readU16(all, p); cout << "LOCAL_LOAD  slot@" << s; break; }
             case 0x40: { uint16_t fid = readU16(all, p);
@@ -251,6 +247,15 @@ int main(int argc, char** argv) {
                               << " want=" << (int)want; break; }
             case 0x42: { uint8_t n = readU8(all, p); cout << "RET        n=" << (int)n; break; }
             case 0x43: cout << "POP"; break;
+            // ★ 补上此前缺失的助记符：缺了它们反汇编会【错位】，
+            //   把操作数当成下一条指令，产出大量假的 NOP / UNK。
+            case 0x44: { uint16_t i = readU16(all, p); uint8_t n = readU8(all, p);
+                         cout << "CLOSURE    f#" << i << " nups=" << (int)n; break; }
+            case 0x45: { uint16_t i = readU16(all, p); cout << "GET_UPVAL  u#" << i; break; }
+            case 0x46: { uint16_t i = readU16(all, p); cout << "SET_UPVAL  u#" << i; break; }
+            case 0x47: { uint16_t s = readU16(all, p); cout << "CLOSE_SLOT slot@" << s; break; }
+            case 0x48: { uint8_t a = readU8(all, p); uint8_t w = readU8(all, p);
+                         cout << "CALL_VALUE argc=" << (int)a << " want=" << (int)w; break; }
             default:    cout << "UNK(0x" << hex << (int)op << dec << ")"; break;
         }
         cout << endl;
